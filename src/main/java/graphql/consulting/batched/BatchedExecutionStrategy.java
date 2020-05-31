@@ -1,5 +1,6 @@
 package graphql.consulting.batched;
 
+import graphql.ExecutionResult;
 import graphql.Scalars;
 import graphql.SerializationError;
 import graphql.TypeMismatchError;
@@ -10,6 +11,7 @@ import graphql.consulting.batched.result.ExecutionResultNode;
 import graphql.consulting.batched.result.LeafExecutionResultNode;
 import graphql.consulting.batched.result.ListExecutionResultNode;
 import graphql.consulting.batched.result.NonNullableFieldWasNullError;
+import graphql.consulting.batched.result.ResultNodesUtil;
 import graphql.consulting.batched.result.RootExecutionResultNode;
 import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
@@ -29,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -63,7 +66,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         ExecutionPath executionPath;
         NormalizedField normalizedField;
         Object source;
-        Mono<Object> resultMono;
+        MonoProcessor<Object> resultMono;
+//        Flux<Object> listener;
 
         public OneField(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
             this.executionPath = executionPath;
@@ -75,11 +79,16 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     private static class Tracker {
         private Deque<OneField> fieldsToFetch = new LinkedList<>();
 
-        public CompletableFuture<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
+        public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
-            oneField.resultMono = new CompletableFuture<>();
-            return oneField.resultMono;
+            oneField.resultMono = MonoProcessor.create();
+//            oneField.listener = oneField.resultMono.flux().publish().autoConnect(1);
+//            System.out.println("added field to fetch. now size: " + fieldsToFetch.size());
+//            return Mono.from(oneField.listener);
+            return oneField.resultMono.doOnSubscribe(subscription -> {
+                System.out.println("YYYYYYYY: Subscribed to resultMono for field " + executionPath);
+            });
         }
     }
 
@@ -102,9 +111,12 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 normalizedQueryFromAst);
 
         return rootMono
-                .map(value -> new graphql.execution.nextgen.result.RootExecutionResultNode(Collections.emptyList()))
+                .map(value -> {
+                    ExecutionResult executionResult = ResultNodesUtil.toExecutionResult(value);
+                    System.out.println("execution result:" + executionResult.toSpecification());
+                    return new graphql.execution.nextgen.result.RootExecutionResultNode(Collections.emptyList());
+                })
                 .toFuture();
-
     }
 
 
@@ -127,25 +139,55 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                         topLevelField,
                         normalizedQueryFromAst,
                         path);
+                System.out.println("SUBSCRIBE ON ERN");
+                executionResultNode = executionResultNode.cache();
+                executionResultNode.subscribe();
+                System.out.println("END");
                 monoChildren.add(executionResultNode);
             }
 
-            while (!tracker.fieldsToFetch.isEmpty()) {
-                System.out.println("tracker size: " + tracker.fieldsToFetch.size());
-                OneField oneField = tracker.fieldsToFetch.poll();
-                FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
-                Function<Object, Mono<Object>> objectMonoFunction = dataFetchers.get(coordinates);
-                Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-                mono.publishOn(fetchingScheduler).publishOn(processingScheduler).subscribe(resolvedObject -> {
-                    System.out.println("got object" + resolvedObject + " " + Thread.currentThread());
-                    oneField.resultMono.complete(resolvedObject);
-                });
-                System.out.println("after one field subscribe");
-            }
-            return Flux.concat(monoChildren).collectList().map(children -> {
-                return RootExecutionResultNode.newRootExecutionResultNode().children(children).build();
+            MonoProcessor<String> result = MonoProcessor.create();
+            fetchFields(tracker, result);
+
+            return result.flatMap(ignored -> {
+                System.out.println("finished overall");
+                return Flux.concat(monoChildren).collectList().map(children -> RootExecutionResultNode.newRootExecutionResultNode().children(children).build());
             });
         }).subscribeOn(processingScheduler);
+    }
+
+    private void fetchFields(Tracker tracker, MonoProcessor<String> result) {
+        while (!tracker.fieldsToFetch.isEmpty()) {
+//            System.out.println("tracker size: " + tracker.fieldsToFetch.size());
+            OneField oneField = tracker.fieldsToFetch.poll();
+            FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
+            Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
+            Mono<Object> mono = objectMonoFunction.apply(oneField.source);
+            mono.publishOn(fetchingScheduler).publishOn(processingScheduler).subscribe(resolvedObject -> {
+                System.out.println("BRAIN: fetched " + oneField.executionPath + " " + Thread.currentThread());
+                oneField.resultMono.onNext(resolvedObject);
+                oneField.resultMono.subscribe(o -> {
+                    System.out.println("fields to fetch :" + tracker.fieldsToFetch.size());
+                    if (tracker.fieldsToFetch.size() == 0) {
+                        result.onNext("finished");
+                    } else {
+                        fetchFields(tracker, result);
+                    }
+                });
+            });
+//            System.out.println("after one field subscribe");
+        }
+    }
+
+    private Function<Object, Mono<Object>> getDataFetcher(FieldCoordinates coordinates, NormalizedField normalizedField) {
+        Function<Object, Mono<Object>> objectMonoFunction = dataFetchers.get(coordinates);
+        if (objectMonoFunction != null) {
+            return objectMonoFunction;
+        }
+        return (source) -> {
+            Map map = (Map) source;
+            return Mono.just(map.get(normalizedField.getResultKey()));
+        };
     }
 
 
@@ -162,9 +204,9 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
-        System.out.println("fetch value for " + executionPath + " with source " + source);
-        return Mono.fromFuture(tracker.addFieldToFetch(executionPath, normalizedField, source)).publishOn(processingScheduler).map(resolved -> {
-            System.out.println("resolved value" + resolved + " " + Thread.currentThread());
+        System.out.println("BODY: ask for mono  for for " + executionPath + " with source " + source + " " + Thread.currentThread());
+        return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
+            System.out.println("BODY: resolved value" + executionPath + " " + Thread.currentThread());
             return resolved;
         });
 
