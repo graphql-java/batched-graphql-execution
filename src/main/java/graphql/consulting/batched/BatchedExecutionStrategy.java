@@ -83,12 +83,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
-//            oneField.listener = oneField.resultMono.flux().publish().autoConnect(1);
-//            System.out.println("added field to fetch. now size: " + fieldsToFetch.size());
-//            return Mono.from(oneField.listener);
-            return oneField.resultMono.doOnSubscribe(subscription -> {
-                System.out.println("YYYYYYYY: Subscribed to resultMono for field " + executionPath);
-            });
+            return oneField.resultMono;
         }
     }
 
@@ -124,7 +119,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                                               Object data,
                                                               NormalizedQueryFromAst normalizedQueryFromAst) {
         return Mono.defer(() -> {
-            System.out.println("Starting in thread " + Thread.currentThread());
             List<NormalizedField> topLevelFields = normalizedQueryFromAst.getTopLevelFields();
             ExecutionPath rootPath = ExecutionPath.rootPath();
             Tracker tracker = new Tracker();
@@ -139,10 +133,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                         topLevelField,
                         normalizedQueryFromAst,
                         path);
-                System.out.println("SUBSCRIBE ON ERN");
                 executionResultNode = executionResultNode.cache();
                 executionResultNode.subscribe();
-                System.out.println("END");
                 monoChildren.add(executionResultNode);
             }
 
@@ -158,24 +150,22 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
     private void fetchFields(Tracker tracker, MonoProcessor<String> result) {
         while (!tracker.fieldsToFetch.isEmpty()) {
-//            System.out.println("tracker size: " + tracker.fieldsToFetch.size());
             OneField oneField = tracker.fieldsToFetch.poll();
             FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
             Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
             Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-            mono.publishOn(fetchingScheduler).publishOn(processingScheduler).subscribe(resolvedObject -> {
-                System.out.println("BRAIN: fetched " + oneField.executionPath + " " + Thread.currentThread());
-                oneField.resultMono.onNext(resolvedObject);
-                oneField.resultMono.subscribe(o -> {
-                    System.out.println("fields to fetch :" + tracker.fieldsToFetch.size());
-                    if (tracker.fieldsToFetch.size() == 0) {
-                        result.onNext("finished");
-                    } else {
-                        fetchFields(tracker, result);
-                    }
-                });
-            });
-//            System.out.println("after one field subscribe");
+            mono.publishOn(fetchingScheduler)
+                    .publishOn(processingScheduler)
+                    .subscribe(resolvedObject -> {
+                        oneField.resultMono.onNext(resolvedObject);
+                        oneField.resultMono.subscribe(o -> {
+                            if (tracker.fieldsToFetch.size() == 0) {
+                                result.onNext("finished");
+                            } else {
+                                fetchFields(tracker, result);
+                            }
+                        });
+                    });
         }
     }
 
@@ -204,9 +194,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
-        System.out.println("BODY: ask for mono  for for " + executionPath + " with source " + source + " " + Thread.currentThread());
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
-            System.out.println("BODY: resolved value" + executionPath + " " + Thread.currentThread());
             return resolved;
         });
 
@@ -249,7 +237,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                                               GraphQLOutputType curType,
                                                               ExecutionPath executionPath) {
 
-        System.out.println("analyzed fetch value for " + executionPath);
         boolean isNonNull = GraphQLTypeUtil.isNonNull(curType);
         if (toAnalyze == null && isNonNull) {
             NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError((GraphQLNonNull) curType, executionPath);
