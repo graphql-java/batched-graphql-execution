@@ -98,6 +98,13 @@ class BatchedExecutionStrategyTest extends Specification {
                 fooData
             })
         }
+
+        Function<Object, Mono<Object>> barBatchedDf = {
+            return Mono.fromSupplier({
+                println "DataFetcher thread: " + Thread.currentThread()
+                fooData
+            })
+        }
 //
         def dataFetchers = [
                 (coordinates("Query", "foo")): fooDF

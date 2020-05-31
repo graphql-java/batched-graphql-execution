@@ -42,6 +42,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static graphql.consulting.batched.result.LeafExecutionResultNode.newLeafExecutionResultNode;
@@ -67,12 +68,19 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         NormalizedField normalizedField;
         Object source;
         MonoProcessor<Object> resultMono;
-//        Flux<Object> listener;
+//        Mono<Object> listener;
 
         public OneField(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
             this.executionPath = executionPath;
             this.normalizedField = normalizedField;
             this.source = source;
+        }
+
+        @Override
+        public String toString() {
+            return "OneField{" +
+                    "executionPath=" + executionPath +
+                    '}';
         }
     }
 
@@ -83,7 +91,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
-            return oneField.resultMono;
+//            oneField.listener = oneField.resultMono.cache();
+            return oneField.resultMono.doOnSubscribe(subscription -> {
+                System.out.println("subscribed to " + executionPath);
+            });
         }
     }
 
@@ -139,30 +150,50 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             }
 
             MonoProcessor<String> result = MonoProcessor.create();
-            fetchFields(tracker, result);
+
+            fetchFields(tracker, result, new AtomicInteger());
 
             return result.flatMap(ignored -> {
-                System.out.println("finished overall");
                 return Flux.concat(monoChildren).collectList().map(children -> RootExecutionResultNode.newRootExecutionResultNode().children(children).build());
             });
         }).subscribeOn(processingScheduler);
     }
 
-    private void fetchFields(Tracker tracker, MonoProcessor<String> result) {
+    private static class FetchedValue {
+        Object fetchedValue;
+        OneField oneField;
+
+        public FetchedValue(Object fetchedValue, OneField oneField) {
+            this.fetchedValue = fetchedValue;
+            this.oneField = oneField;
+        }
+    }
+
+    private void fetchFields(Tracker tracker,
+                             MonoProcessor<String> result,
+                             AtomicInteger count) {
+        System.out.println("start fetch fields size: " + tracker.fieldsToFetch.size() + " = " + tracker.fieldsToFetch);
+        // everything happens only in one thread
         while (!tracker.fieldsToFetch.isEmpty()) {
             OneField oneField = tracker.fieldsToFetch.poll();
             FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
             Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
             Mono<Object> mono = objectMonoFunction.apply(oneField.source);
+            count.incrementAndGet();
             mono.publishOn(fetchingScheduler)
                     .publishOn(processingScheduler)
                     .subscribe(resolvedObject -> {
+//                        fetchedValues.add(new FetchedValue(resolvedObject,oneField));
                         oneField.resultMono.onNext(resolvedObject);
                         oneField.resultMono.subscribe(o -> {
-                            if (tracker.fieldsToFetch.size() == 0) {
+                            count.decrementAndGet();
+                            System.out.println("got " + oneField.executionPath);
+                            System.out.println("count:" + count + " fieldsToFetch size: " + tracker.fieldsToFetch.size());
+                            if (count.get() == 0 && tracker.fieldsToFetch.size() == 0) {
+                                System.out.println("finished overall");
                                 result.onNext("finished");
-                            } else {
-                                fetchFields(tracker, result);
+                            } else if (count.get() == 0 && tracker.fieldsToFetch.size() > 0) {
+                                fetchFields(tracker, result, count);
                             }
                         });
                     });
@@ -195,6 +226,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
+            System.out.println("WORKER: Got value for " + executionPath);
             return resolved;
         });
 
@@ -273,9 +305,12 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             if (child.getObjectType() == resolvedType) {
                 ExecutionPath pathForChild = executionPath.segment(child.getResultKey());
                 Mono<ExecutionResultNode> childNode = fetchAndAnalyzeField(context, tracker, completedValue, child, normalizedQueryFromAst, pathForChild);
+                childNode = childNode.cache();
+                childNode.subscribe();
                 nodeChildrenMono.add(childNode);
             }
         }
+//        System.out.println("resolving object at " + executionPath + " with " + nodeChildrenMono.size());
         return Flux.concat(nodeChildrenMono).collectList().map(nodeChildren -> {
             return newObjectExecutionResultNode()
                     .executionPath(executionPath)
@@ -302,6 +337,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                                   ExecutionPath executionPath) {
 
         if (toAnalyze instanceof List) {
+            // eagerly subscribe needed?
             return createListImpl(executionContext, tracker, toAnalyze, (List<Object>) toAnalyze, curType, normalizedField, normalizedQueryFromAst, executionPath);
         } else {
             TypeMismatchError error = new TypeMismatchError(executionPath, curType);

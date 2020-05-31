@@ -1,4 +1,5 @@
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -7,34 +8,23 @@ public class Test {
     static Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
 
     public static void main(String[] args) {
-//        MonoProcessor<Object> source = MonoProcessor.create();
-//        Mono<Object> mono = source.doOnSubscribe(subscription -> {
-//            System.out.println("SUBSCCIBED");
-//        });
-//        mono.subscribe(value -> {
-//            System.out.println("VALUE 1: " + value);
-//        });
-//        source.onNext("WORLD");
-//        mono.subscribe(value -> {
-//            System.out.println("VALUE 2: " + value);
-//        });
+        MonoProcessor<Object> source = MonoProcessor.create();
 
-        Mono<String> stringMono = Mono.fromCallable(() -> {
-            System.out.println("1");
-            return "hello";
+        Mono<Object> mono = source.doOnSubscribe(subscription -> {
+            System.out.println("on subscribe");
         });
 
-        Mono<String> cache = stringMono;
-        cache.subscribe(s -> {
-            System.out.println(s);
+        mono = mono.flatMap(resolveValue -> {
+            System.out.println("resolved original value " + resolveValue);
+            return Mono.just("sub value").doOnSubscribe(subvalue -> {
+                System.out.println("subscribed sub value");
+            });
         });
-        cache.subscribe(s -> {
-            System.out.println(s);
-        });
-//        Mono.defer(() -> {
-//            System.out.println("creating in " + Thread.currentThread());
-//            return Mono.just("value");
-//        }).subscribeOn(processingScheduler).subscribe();
+
+        mono.subscribe();
+
+        source.onNext("original value");
 
     }
+
 }
