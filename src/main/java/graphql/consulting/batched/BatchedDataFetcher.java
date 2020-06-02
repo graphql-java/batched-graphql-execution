@@ -12,7 +12,7 @@ import java.util.List;
 
 public interface BatchedDataFetcher {
 
-    default Mono<List<Object>> get(List<Object> sources, List<NormalizedField> normalizedFields, List<ExecutionPath> executionPaths) {
+    default Mono<BatchedDataFetcherResult> get(BatchedDataFetcherEnvironment environment) {
         return null;
     }
 }

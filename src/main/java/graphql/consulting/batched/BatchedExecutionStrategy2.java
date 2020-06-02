@@ -12,11 +12,11 @@ import graphql.consulting.batched.result.LeafExecutionResultNode;
 import graphql.consulting.batched.result.ListExecutionResultNode;
 import graphql.consulting.batched.result.NonNullableFieldWasNullError;
 import graphql.consulting.batched.result.ResultNodesUtil;
-import graphql.consulting.batched.result.RootExecutionResultNode;
 import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
 import graphql.execution.nextgen.ExecutionStrategy;
 import graphql.execution.nextgen.FieldSubSelection;
+import graphql.execution.nextgen.result.RootExecutionResultNode;
 import graphql.schema.CoercingSerializeException;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
@@ -35,6 +35,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuples;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -44,9 +46,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import static graphql.consulting.batched.result.LeafExecutionResultNode.newLeafExecutionResultNode;
@@ -54,16 +57,16 @@ import static graphql.consulting.batched.result.ObjectExecutionResultNode.newObj
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLTypeUtil.isList;
 
-public class BatchedExecutionStrategy implements ExecutionStrategy {
+public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
     Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
     Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
 
-    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy.class);
+    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
 
     private final Map<FieldCoordinates, Function<Object, Mono<Object>>> dataFetchers;
 
-    public BatchedExecutionStrategy(Map<FieldCoordinates, Function<Object, Mono<Object>>> dataFetchers) {
+    public BatchedExecutionStrategy2(Map<FieldCoordinates, Function<Object, Mono<Object>>> dataFetchers) {
         this.dataFetchers = dataFetchers;
     }
 
@@ -72,6 +75,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         NormalizedField normalizedField;
         Object source;
         MonoProcessor<Object> resultMono;
+        Runnable after;
+//        Flux<>
 //        Mono<Object> listener;
 
         public OneField(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
@@ -95,9 +100,13 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
-//            oneField.listener = oneField.resultMono.cache();
-            return oneField.resultMono.doOnSubscribe(subscription -> {
-                System.out.println("subscribed to " + executionPath);
+            Mono<Object> cache = oneField.resultMono.cache();
+//            oneField.listener = Flux.from(oneField.resultMono).publish().autoConnect()
+            return cache.doOnSubscribe(subscription -> {
+                System.out.println("subscribed to " + executionPath + " " + Thread.currentThread());
+                cache.subscribe(ignored -> {
+                    oneField.after.run();
+                });
             });
         }
     }
@@ -115,41 +124,39 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
         Object data = null;
 
-        Mono<RootExecutionResultNode> rootMono = fetchTopLevelFields(
+        Mono<Map<String, Object>> rootMono = fetchTopLevelFields(
                 executionContext,
                 data,
                 normalizedQueryFromAst);
 
         return rootMono
                 .map(value -> {
-                    ExecutionResult executionResult = ResultNodesUtil.toExecutionResult(value);
-                    System.out.println("execution result:" + executionResult.toSpecification());
-                    return new graphql.execution.nextgen.result.RootExecutionResultNode(Collections.emptyList());
+                    System.out.println("result: " + value);
+                    return new RootExecutionResultNode(Collections.emptyList());
                 })
                 .toFuture();
     }
 
 
-    private Mono<RootExecutionResultNode> fetchTopLevelFields(ExecutionContext executionContext,
-                                                              Object data,
-                                                              NormalizedQueryFromAst normalizedQueryFromAst) {
+    private Mono<Map<String, Object>> fetchTopLevelFields(ExecutionContext executionContext,
+                                                          Object data,
+                                                          NormalizedQueryFromAst normalizedQueryFromAst) {
         return Mono.defer(() -> {
             List<NormalizedField> topLevelFields = normalizedQueryFromAst.getTopLevelFields();
             ExecutionPath rootPath = ExecutionPath.rootPath();
             Tracker tracker = new Tracker();
-            List<Mono<ExecutionResultNode>> monoChildren = new ArrayList<>(topLevelFields.size());
+            List<Mono<Tuple2<String, Object>>> monoChildren = new ArrayList<>(topLevelFields.size());
             for (NormalizedField topLevelField : topLevelFields) {
                 ExecutionPath path = rootPath.segment(topLevelField.getResultKey());
 
-                Mono<ExecutionResultNode> executionResultNode = fetchAndAnalyzeField(
+                Mono<Tuple2<String, Object>> executionResultNode = fetchAndAnalyzeField(
                         executionContext,
                         tracker,
                         data,
                         topLevelField,
                         normalizedQueryFromAst,
-                        path);
-                executionResultNode = executionResultNode.cache();
-                executionResultNode.subscribe();
+                        path)
+                        .map(resolvedValue -> Tuples.of(topLevelField.getResultKey(), resolvedValue));
                 monoChildren.add(executionResultNode);
             }
 
@@ -158,7 +165,13 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             fetchFields(tracker, result, 1);
 
             return result.flatMap(ignored -> {
-                return Flux.concat(monoChildren).collectList().map(children -> RootExecutionResultNode.newRootExecutionResultNode().children(children).build());
+                return Flux.concat(monoChildren).collectList().map(children -> {
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    for (Tuple2<String, Object> tuple : children) {
+                        map.put(tuple.getT1(), tuple.getT2());
+                    }
+                    return map;
+                });
             });
         }).subscribeOn(processingScheduler);
     }
@@ -191,8 +204,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     .publishOn(fetchingScheduler)
                     .publishOn(processingScheduler)
                     .subscribe(resolvedObject -> {
-                        oneField.resultMono.onNext(resolvedObject);
-                        oneField.resultMono.subscribe(o -> {
+                        oneField.after = () -> {
                             // this means we are waiting per level
                             count.decrementAndGet();
                             if (count.get() == 0 && tracker.fieldsToFetch.size() == 0) {
@@ -201,7 +213,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                             } else if (count.get() == 0 && tracker.fieldsToFetch.size() > 0) {
                                 fetchFields(tracker, result, level + 1);
                             }
-                        });
+                        };
+                        oneField.resultMono.onNext(resolvedObject);
                     });
         }
     }
@@ -235,21 +248,22 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
 
-    private Mono<ExecutionResultNode> fetchAndAnalyzeField(ExecutionContext context,
-                                                           Tracker tracker,
-                                                           Object source,
-                                                           NormalizedField normalizedField,
-                                                           NormalizedQueryFromAst normalizedQueryFromAst,
-                                                           ExecutionPath executionPath) {
+    private Mono<Object> fetchAndAnalyzeField(ExecutionContext context,
+                                              Tracker tracker,
+                                              Object source,
+                                              NormalizedField normalizedField,
+                                              NormalizedQueryFromAst normalizedQueryFromAst,
+                                              ExecutionPath executionPath) {
         // if should be batched we will add it to the list of sources that should be fetched
         return fetchValue(source, tracker, normalizedField, executionPath).flatMap(fetchedValue -> {
-            return analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath);
+            Mono<Object> analyseValueMono = analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath);
+            return analyseValueMono;
         });
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
-            System.out.println("WORKER: Got value for " + executionPath);
+            System.out.println("WORKER: Got value for " + executionPath + " " + Thread.currentThread());
             return resolved;
         });
 
@@ -275,29 +289,30 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
 
-    private Mono<ExecutionResultNode> analyseValue(ExecutionContext executionContext,
-                                                   Tracker tracker,
-                                                   Object fetchedValue,
-                                                   NormalizedField normalizedField,
-                                                   NormalizedQueryFromAst normalizedQueryFromAst,
-                                                   ExecutionPath executionPath) {
+    private Mono<Object> analyseValue(ExecutionContext executionContext,
+                                      Tracker tracker,
+                                      Object fetchedValue,
+                                      NormalizedField normalizedField,
+                                      NormalizedQueryFromAst normalizedQueryFromAst,
+                                      ExecutionPath executionPath) {
         return analyzeFetchedValueImpl(executionContext, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, normalizedField.getFieldDefinition().getType(), executionPath);
     }
 
-    private Mono<ExecutionResultNode> analyzeFetchedValueImpl(ExecutionContext executionContext,
-                                                              Tracker tracker,
-                                                              Object toAnalyze,
-                                                              NormalizedField normalizedField,
-                                                              NormalizedQueryFromAst normalizedQueryFromAst,
-                                                              GraphQLOutputType curType,
-                                                              ExecutionPath executionPath) {
+    private Mono<Object> analyzeFetchedValueImpl(ExecutionContext executionContext,
+                                                 Tracker tracker,
+                                                 Object toAnalyze,
+                                                 NormalizedField normalizedField,
+                                                 NormalizedQueryFromAst normalizedQueryFromAst,
+                                                 GraphQLOutputType curType,
+                                                 ExecutionPath executionPath) {
 
         boolean isNonNull = GraphQLTypeUtil.isNonNull(curType);
         if (toAnalyze == null && isNonNull) {
             NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError((GraphQLNonNull) curType, executionPath);
-            return Mono.just(createNullERNWithNullableError(normalizedField, executionPath, nonNullableFieldWasNullError));
+            return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == null) {
-            return Mono.just(createNullERN(normalizedField, executionPath));
+//            return Mono.just(createNullERN(normalizedField, executionPath));
+            return Mono.just("NULL");
         }
 
         curType = (GraphQLOutputType) GraphQLTypeUtil.unwrapNonNull(curType);
@@ -314,36 +329,40 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         return resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, toAnalyze, executionPath);
     }
 
-    private Mono<ExecutionResultNode> resolveObject(ExecutionContext context,
-                                                    Tracker tracker,
-                                                    NormalizedField normalizedField,
-                                                    NormalizedQueryFromAst normalizedQueryFromAst,
-                                                    GraphQLObjectType resolvedType,
-                                                    Object completedValue,
-                                                    ExecutionPath executionPath) {
+    private Mono<Object> resolveObject(ExecutionContext context,
+                                       Tracker tracker,
+                                       NormalizedField normalizedField,
+                                       NormalizedQueryFromAst normalizedQueryFromAst,
+                                       GraphQLObjectType resolvedType,
+                                       Object completedValue,
+                                       ExecutionPath executionPath) {
 
-        List<Mono<ExecutionResultNode>> nodeChildrenMono = new ArrayList<>(normalizedField.getChildren().size());
+        List<Mono<Tuple2<String, Object>>> nodeChildrenMono = new ArrayList<>(normalizedField.getChildren().size());
 
         for (NormalizedField child : normalizedField.getChildren()) {
             if (child.getObjectType() == resolvedType) {
                 ExecutionPath pathForChild = executionPath.segment(child.getResultKey());
-                Mono<ExecutionResultNode> childNode = fetchAndAnalyzeField(context, tracker, completedValue, child, normalizedQueryFromAst, pathForChild);
-                childNode = childNode.cache();
-                childNode.subscribe();
+                Mono<Tuple2<String, Object>> childNode = fetchAndAnalyzeField(context, tracker, completedValue, child, normalizedQueryFromAst, pathForChild)
+                        .map(object -> Tuples.of(child.getResultKey(), object));
                 nodeChildrenMono.add(childNode);
             }
         }
 //        System.out.println("resolving object at " + executionPath + " with " + nodeChildrenMono.size());
-        return Flux.concat(nodeChildrenMono).collectList().map(nodeChildren -> {
-            return newObjectExecutionResultNode()
-                    .executionPath(executionPath)
-                    .normalizedField(normalizedField)
-                    .objectType(normalizedField.getObjectType())
-                    .fieldDefinition(normalizedField.getFieldDefinition())
-                    .completedValue(completedValue)
-                    .children(nodeChildren)
-                    .build();
-
+        return Flux.concat(nodeChildrenMono).collectList().map(tupleList -> {
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (Tuple2<String, Object> tuple2 : tupleList) {
+                map.put(tuple2.getT1(), tuple2.getT2());
+            }
+            return map;
+//            return newObjectExecutionResultNode()
+//                    .executionPath(executionPath)
+//                    .normalizedField(normalizedField)
+//                    .objectType(normalizedField.getObjectType())
+//                    .fieldDefinition(normalizedField.getFieldDefinition())
+//                    .completedValue(completedValue)
+//                    .children(nodeChildren)
+//                    .build();
+//
 
         });
 
@@ -351,13 +370,13 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
 
-    private Mono<ExecutionResultNode> analyzeList(ExecutionContext executionContext,
-                                                  Tracker tracker,
-                                                  Object toAnalyze,
-                                                  GraphQLList curType,
-                                                  NormalizedField normalizedField,
-                                                  NormalizedQueryFromAst normalizedQueryFromAst,
-                                                  ExecutionPath executionPath) {
+    private Mono<Object> analyzeList(ExecutionContext executionContext,
+                                     Tracker tracker,
+                                     Object toAnalyze,
+                                     GraphQLList curType,
+                                     NormalizedField normalizedField,
+                                     NormalizedQueryFromAst normalizedQueryFromAst,
+                                     ExecutionPath executionPath) {
 
         if (toAnalyze instanceof List) {
             // eagerly subscribe needed?
@@ -399,31 +418,32 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 .build();
     }
 
-    private Mono<ExecutionResultNode> createListImpl(ExecutionContext executionContext,
-                                                     Tracker tracker,
-                                                     Object fetchedValue,
-                                                     List<Object> iterableValues,
-                                                     GraphQLList currentType,
-                                                     NormalizedField normalizedField,
-                                                     NormalizedQueryFromAst normalizedQueryFromAst,
-                                                     ExecutionPath executionPath) {
-        List<Mono<ExecutionResultNode>> children = new ArrayList<>();
+    private Mono<Object> createListImpl(ExecutionContext executionContext,
+                                        Tracker tracker,
+                                        Object fetchedValue,
+                                        List<Object> iterableValues,
+                                        GraphQLList currentType,
+                                        NormalizedField normalizedField,
+                                        NormalizedQueryFromAst normalizedQueryFromAst,
+                                        ExecutionPath executionPath) {
+        List<Mono<Object>> children = new ArrayList<>();
         int index = 0;
         for (Object item : iterableValues) {
             ExecutionPath indexedPath = executionPath.segment(index);
             children.add(analyzeFetchedValueImpl(executionContext, tracker, item, normalizedField, normalizedQueryFromAst, (GraphQLOutputType) GraphQLTypeUtil.unwrapOne(currentType), indexedPath));
             index++;
         }
-        return Flux.concat(children).collectList().map(c ->
-                ListExecutionResultNode.newListExecutionResultNode()
-                        .executionPath(executionPath)
-                        .normalizedField(normalizedField)
-                        .fieldDefinition(normalizedField.getFieldDefinition())
-                        .objectType(normalizedField.getObjectType())
-                        .completedValue(fetchedValue)
-                        .children(c)
-                        .build()
-        );
+        return Flux.concat(children).collectList().cast(Object.class);
+//        .map(c ->
+//                ListExecutionResultNode.newListExecutionResultNode()
+//                        .executionPath(executionPath)
+//                        .normalizedField(normalizedField)
+//                        .fieldDefinition(normalizedField.getFieldDefinition())
+//                        .objectType(normalizedField.getObjectType())
+//                        .completedValue(fetchedValue)
+//                        .children(c)
+//                        .build()
+//        );
 
     }
 
@@ -451,10 +471,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
 
-    private ExecutionResultNode analyzeScalarValue(Object toAnalyze,
-                                                   GraphQLScalarType scalarType,
-                                                   NormalizedField normalizedField,
-                                                   ExecutionPath executionPath) {
+    private Object analyzeScalarValue(Object toAnalyze,
+                                      GraphQLScalarType scalarType,
+                                      NormalizedField normalizedField,
+                                      ExecutionPath executionPath) {
         Object serialized;
         try {
             serialized = serializeScalarValue(toAnalyze, scalarType);
@@ -470,13 +490,14 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     .build();
         }
 
-        return newLeafExecutionResultNode()
-                .executionPath(executionPath)
-                .normalizedField(normalizedField)
-                .fieldDefinition(normalizedField.getFieldDefinition())
-                .objectType(normalizedField.getObjectType())
-                .completedValue(serialized)
-                .build();
+        return serialized;
+//        return newLeafExecutionResultNode()
+//                .executionPath(executionPath)
+//                .normalizedField(normalizedField)
+//                .fieldDefinition(normalizedField.getFieldDefinition())
+//                .objectType(normalizedField.getObjectType())
+//                .completedValue(serialized)
+//                .build();
 
     }
 
@@ -491,10 +512,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         return scalarType.getCoercing().serialize(toAnalyze);
     }
 
-    private ExecutionResultNode analyzeEnumValue(Object toAnalyze,
-                                                 GraphQLEnumType enumType,
-                                                 NormalizedField normalizedField,
-                                                 ExecutionPath executionPath) {
+    private Object analyzeEnumValue(Object toAnalyze,
+                                    GraphQLEnumType enumType,
+                                    NormalizedField normalizedField,
+                                    ExecutionPath executionPath) {
         Object serialized;
         try {
             serialized = enumType.serialize(toAnalyze);
@@ -509,13 +530,14 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     .addError(error)
                     .build();
         }
-        return newLeafExecutionResultNode()
-                .executionPath(executionPath)
-                .normalizedField(normalizedField)
-                .fieldDefinition(normalizedField.getFieldDefinition())
-                .objectType(normalizedField.getObjectType())
-                .completedValue(serialized)
-                .build();
+        return serialized;
+//        return newLeafExecutionResultNode()
+//                .executionPath(executionPath)
+//                .normalizedField(normalizedField)
+//                .fieldDefinition(normalizedField.getFieldDefinition())
+//                .objectType(normalizedField.getObjectType())
+//                .completedValue(serialized)
+//                .build();
     }
 
 

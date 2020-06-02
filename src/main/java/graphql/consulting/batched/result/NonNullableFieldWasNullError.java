@@ -18,7 +18,7 @@ import static graphql.schema.GraphQLTypeUtil.simplePrint;
  * This is the base error that indicates that a non null field value was in fact null.
  */
 @PublicApi
-public class NonNullableFieldWasNullError implements GraphQLError {
+public class NonNullableFieldWasNullError extends RuntimeException implements GraphQLError {
 
     private final String message;
     private final List<Object> path;
