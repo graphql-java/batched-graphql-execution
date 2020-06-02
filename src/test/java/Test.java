@@ -1,16 +1,11 @@
 import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxProcessor;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoProcessor;
-import reactor.core.publisher.UnicastProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
-import java.time.Instant;
-import java.util.Deque;
-import java.util.LinkedList;
 
 public class Test {
 
@@ -90,15 +85,31 @@ public class Test {
 
         MonoProcessor<Object> objectMonoProcessor = MonoProcessor.create();
         Mono<Object> cache = objectMonoProcessor.cache();
-        Mono<Object> mono = cache.doOnSubscribe(subscription -> {
-            System.out.println("first consumer");
 
+        Mono<Object> mono = cache.doFinally(subscription -> {
+            System.out.println("on success");
             cache.subscribe(o -> {
-                System.out.println("second consumer");
+                System.out.println("second");
             });
         });
+        mono.subscribe(value -> {
+            System.out.println("first");
+        });
+        System.out.println("on next");
         objectMonoProcessor.onNext("hello");
-        mono.subscribe();
+
+//        Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
+//        Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
+//
+//        Mono<String> stringMono = Mono.fromCallable(() -> {
+//            System.out.println("in " + Thread.currentThread());
+//            return Instant.now().toString();
+//        });
+//        stringMono.subscribeOn(fetchingScheduler).publishOn(processingScheduler).subscribe(s -> {
+//            System.out.println(s + " a " + Thread.currentThread());
+//        });
+//
+
     }
 
 }
