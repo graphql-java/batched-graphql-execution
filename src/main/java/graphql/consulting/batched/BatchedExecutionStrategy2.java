@@ -92,7 +92,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
 //            oneField.listener = oneField.resultMono.cache();
-            return oneField.resultMono.doOnSubscribe(subscription -> {
+            return oneField.resultMono.cache().doOnSubscribe(subscription -> {
                 System.out.println("subscribed to " + executionPath);
             });
         }
@@ -144,7 +144,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                         normalizedQueryFromAst,
                         path)
                         .map(resolvedValue -> Tuples.of(topLevelField.getResultKey(), resolvedValue));
-                executionResultNode = executionResultNode.cache();
+                executionResultNode = executionResultNode;
 //                executionResultNode.subscribe();
                 monoChildren.add(executionResultNode);
             }
@@ -193,7 +193,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                     .publishOn(fetchingScheduler)
                     .publishOn(processingScheduler)
                     .subscribe(resolvedObject -> {
-//                        System.out.println("next " + oneField.executionPath);
+                        // this re
                         oneField.resultMono.onNext(resolvedObject);
                         oneField.resultMono.subscribe(o -> {
 //                            System.out.println("Got " + oneField.executionPath);
@@ -334,7 +334,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 ExecutionPath pathForChild = executionPath.segment(child.getResultKey());
                 Mono<Tuple2<String, Object>> childNode = fetchAndAnalyzeField(context, tracker, completedValue, child, normalizedQueryFromAst, pathForChild)
                         .map(object -> Tuples.of(child.getResultKey(), object));
-                childNode = childNode.cache();
+                childNode = childNode;
 //                childNode.subscribe();
                 nodeChildrenMono.add(childNode);
             }
