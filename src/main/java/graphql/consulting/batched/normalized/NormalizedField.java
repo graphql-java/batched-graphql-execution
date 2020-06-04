@@ -141,18 +141,13 @@ public class NormalizedField {
 
     @Override
     public String toString() {
-        StringBuilder result = new StringBuilder();
-        result.append("NormalizedField{");
-        if (alias != null) {
-            result.append(alias).append(": ");
-        }
-        result.append(objectType.getName())
-                .append(".")
-                .append(getName())
-                .append("}");
-
-
-        return result.toString();
+        return "NormalizedField{" +
+                "alias='" + alias + '\'' +
+                ", objectType.name=" + objectType.getName() +
+                ", fieldDefinition.name=" + fieldDefinition.getName() +
+                ", level=" + level +
+                ", path=" + path +
+                '}';
     }
 
     public static class Builder {

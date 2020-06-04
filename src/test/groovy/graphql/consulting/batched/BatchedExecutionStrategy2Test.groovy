@@ -4,22 +4,30 @@ import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
 import spock.lang.Specification
 
+import java.util.concurrent.atomic.AtomicInteger
+
 import static graphql.ExecutionInput.newExecutionInput
 import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
 class BatchedExecutionStrategy2Test extends Specification {
 
-    def "test execution with lists"() {
-        def fooData = [[id: "fooId1", bar: ["barId1", "barId2", null]],
+    def "two level batching"() {
+        def fooData = [[id: "fooId1"],
                        null,
-                       [id: "fooId2", bar: ["barId3", "barId4", "barId5"]],
+                       [id: "fooId2"],
                        null]
-        def bar1 = [id: "barId1", name: "someBar1"];
-        def bar2 = [id: "barId2", name: "someBar2"];
-        def bar3 = [id: "barId3", name: "someBar3"];
-        def bar4 = [id: "barId4", name: "someBar4"];
-        def bar5 = [id: "barId5", name: "someBar5"];
+        def bar1 = [id: "barId1"];
+        def bar2 = [id: "barId2"];
+        def bar3 = [id: "barId3"];
+        def bar4 = [id: "barId4"];
+        def bar5 = [id: "barId5"];
+
+        def barName1 = "someBar1"
+        def barName2 = "someBar2"
+        def barName3 = "someBar3"
+        def barName4 = "someBar4"
+        def barName5 = "someBar5"
 //        def dataFetchers = [
 //                Query: [foo: { env -> fooData } as DataFetcher]
 //        ]
@@ -49,39 +57,40 @@ class BatchedExecutionStrategy2Test extends Specification {
         """
 
         when:
-//        Function<Object, Mono<Object>> fooDF = {
-//            return Mono.fromSupplier({
-//                println "DataFetcher thread: " + Thread.currentThread()
-//                fooData
-//            })
-//        }
-//
-//        Function<Object, Mono<Object>> barBatchedDf = {
-//            return Mono.fromSupplier({
-//                println "DataFetcher thread: " + Thread.currentThread()
-//                fooData
-//            })
-//        }
-//
+
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "foo"), ({ fooData }) as TrivialDataFetcher)
 
+        AtomicInteger barDFCount = new AtomicInteger()
         BatchedDataFetcher barDF = { env ->
-            println "Batched df with " + Thread.currentThread();
+//            println "Batched df with " + Thread.currentThread();
             return Mono.fromSupplier({
-                println "DataFetcher thread: " + Thread.currentThread()
-                println "env sources: " + env.sources
+                barDFCount.incrementAndGet();
+                println "fetching bars with env sources: " + env.sources + " in thread " + Thread.currentThread()
                 return new BatchedDataFetcherResult([[bar1, bar2], [bar3, bar4, bar5]]);
             });
         } as BatchedDataFetcher;
 
+        AtomicInteger barNameDFCount = new AtomicInteger()
+        BatchedDataFetcher barNameDF = { env ->
+//            println "Batched df with " + Thread.currentThread();
+            return Mono.fromSupplier({
+                barNameDFCount.incrementAndGet();
+                println "fetching barNames with sources: " + env.sources + " in thread " + Thread.currentThread()
+                return new BatchedDataFetcherResult([barName1, barName2, barName3, barName4, barName5])
+            });
+        } as BatchedDataFetcher;
+
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Foo", "bar"), barDF)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Bar", "name"), barNameDF)
 
 
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
         def result = graphQL.execute(newExecutionInput(query))
         then:
-        result.getData() == [foo: fooData]
+        barDFCount.get() == 1
+        barNameDFCount.get() == 1
+//        result.getData() == [foo: fooData]
     }
 
 }

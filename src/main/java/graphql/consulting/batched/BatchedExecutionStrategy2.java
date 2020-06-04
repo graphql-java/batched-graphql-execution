@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static graphql.consulting.batched.result.LeafExecutionResultNode.newLeafExecutionResultNode;
 import static graphql.schema.FieldCoordinates.coordinates;
@@ -89,40 +90,53 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
         private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
 
+//        private final Set<NormalizedField> batchedFieldsFetched = new LinkedHashSet<>();
+
         public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
             return oneField.resultMono.cache().doOnSubscribe(subscription -> {
-                System.out.println("subscribed to " + executionPath);
+//                System.out.println("subscribed to " + executionPath);
             });
         }
 
-        public void incrementNonNullCount(NormalizedField normalizedField) {
-            nonNullCount.put(normalizedField, nonNullCount.getOrDefault(normalizedField, 0) + 1);
+        public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
+            int value = nonNullCount.getOrDefault(normalizedField, 0) + 1;
+//            System.out.println("increment non null count to " + value + " for " + normalizedField + " at path " + executionPath);
+            nonNullCount.put(normalizedField, value);
         }
 
         public int addBatch(NormalizedField normalizedField, OneField oneField) {
             List<OneField> oneFields = batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>());
             oneFields.add(oneField);
             return oneFields.size();
+
+//            NormalizedField curParent = normalizedField.getParent();
+//            while (curParent != null) {
+//                nonNullCount.get(curParent)
+//            }
         }
 
-        public void getNonNullC(NormalizedField normalizedField) {
-            nonNullCount.put(normalizedField, nonNullCount.getOrDefault(normalizedField, 0) + 1);
-        }
-
-        public long decrementNonNullCount(NormalizedField normalizedField) {
-            if (normalizedField == null) {
-                return 0;
-            }
-            if (nonNullCount.getOrDefault(normalizedField, 0) == 0) {
-                return 0;
-            }
-            int value = nonNullCount.getOrDefault(normalizedField, 0) - 1;
-            nonNullCount.put(normalizedField, value);
-            return value;
-        }
+//        public void addBatchFieldFetched(NormalizedField normalizedField) {
+//            if (batchedFieldsFetched.contains(normalizedField)) {
+//                throw new RuntimeException("" + normalizedField + " already fetched");
+//            }
+//            this.batchedFieldsFetched.add(normalizedField);
+//        }
+//
+//
+//        public long decrementNonNullCount(NormalizedField normalizedField) {
+//            if (normalizedField == null) {
+//                return 0;
+//            }
+//            if (nonNullCount.getOrDefault(normalizedField, 0) == 0) {
+//                return 0;
+//            }
+//            int value = nonNullCount.getOrDefault(normalizedField, 0) - 1;
+//            nonNullCount.put(normalizedField, value);
+//            return value;
+//        }
     }
 
     @Override
@@ -210,9 +224,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         while (!tracker.fieldsToFetch.isEmpty()) {
 //            List<OneField> batch = batches.poll();
 
+
             OneField oneField = tracker.fieldsToFetch.poll();
+            List<ExecutionPath> exPathsLeft = tracker.fieldsToFetch.stream().map(oneField1 -> oneField1.executionPath).collect(Collectors.toList());
+            System.out.println("fetching " + oneField.executionPath + " with queue left " + exPathsLeft);
             NormalizedField normalizedField = oneField.normalizedField;
-            System.out.println("fetching " + oneField.executionPath);
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
             if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
@@ -224,6 +240,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                     List<Object> sources = FpKit.map(oneFields, f -> f.source);
                     List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
                     List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
+                    System.out.println("fetching batched values for " + executionPaths);
                     BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
                     Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
                     batchedDataFetcherResultMono
@@ -233,19 +250,20 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                                 for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
                                     Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
                                     oneFields.get(i).resultMono.onNext(fetchedValue);
-                                    oneFields.get(i).resultMono.subscribe(o -> {
-                                        fetchFields(executionContext, normalizedQueryFromAst, tracker);
-                                    });
                                 }
+                                fetchFields(executionContext, normalizedQueryFromAst, tracker);
                             });
 
+                } else {
+                    System.out.println("not fetching batched because " + curCount + " vs " + expectedCount);
                 }
             } else {
+                System.out.println("fetching trivial value in thread");
                 TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
                 Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
-                System.out.println("trivial fetched value: " + fetchedValue);
+//                System.out.println("trivial fetched value: " + fetchedValue);
                 oneField.resultMono.onNext(fetchedValue);
-                System.out.println("after subscribe with " + tracker.fieldsToFetch.size());
+//                System.out.println("after subscribe with " + tracker.fieldsToFetch.size());
             }
         }
 
@@ -317,9 +335,9 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
-        System.out.println("add value to fetch with " + executionPath);
+        System.out.println("new fetch: " + executionPath);
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
-            System.out.println("WORKER: Got value for " + executionPath);
+//            System.out.println("WORKER: Got value for " + executionPath);
             return resolved;
         });
 
@@ -375,13 +393,13 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         if (isList(curType)) {
             return analyzeList(executionContext, tracker, toAnalyze, (GraphQLList) curType, normalizedField, normalizedQueryFromAst, executionPath);
         } else if (curType instanceof GraphQLScalarType) {
-            tracker.incrementNonNullCount(normalizedField);
+            tracker.incrementNonNullCount(normalizedField, executionPath);
             return Mono.just(analyzeScalarValue(toAnalyze, (GraphQLScalarType) curType, normalizedField, executionPath));
         } else if (curType instanceof GraphQLEnumType) {
-            tracker.incrementNonNullCount(normalizedField);
+            tracker.incrementNonNullCount(normalizedField, executionPath);
             return Mono.just(analyzeEnumValue(toAnalyze, (GraphQLEnumType) curType, normalizedField, executionPath));
         }
-        tracker.incrementNonNullCount(normalizedField);
+        tracker.incrementNonNullCount(normalizedField, executionPath);
 
         GraphQLObjectType resolvedObjectType = resolveType(executionContext, toAnalyze, curType);
         return resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, toAnalyze, executionPath);
