@@ -1,7 +1,6 @@
 import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -83,20 +82,20 @@ public class Test {
 //        }
 //        Thread.sleep(10000);
 
-        MonoProcessor<Object> objectMonoProcessor = MonoProcessor.create();
-        Mono<Object> cache = objectMonoProcessor.cache();
-
-        Mono<Object> mono = cache.doFinally(subscription -> {
-            System.out.println("on success");
-            cache.subscribe(o -> {
-                System.out.println("second");
-            });
-        });
-        mono.subscribe(value -> {
-            System.out.println("first");
-        });
-        System.out.println("on next");
-        objectMonoProcessor.onNext("hello");
+//        MonoProcessor<Object> objectMonoProcessor = MonoProcessor.create();
+//        Mono<Object> cache = objectMonoProcessor.cache();
+//
+//        Mono<Object> mono = cache.doFinally(subscription -> {
+//            System.out.println("on success");
+//            cache.subscribe(o -> {
+//                System.out.println("second");
+//            });
+//        });
+//        mono.subscribe(value -> {
+//            System.out.println("first");
+//        });
+//        System.out.println("on next");
+//        objectMonoProcessor.onNext("hello");
 
 //        Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
 //        Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
@@ -109,6 +108,16 @@ public class Test {
 //            System.out.println(s + " a " + Thread.currentThread());
 //        });
 //
+        Mono<String> defer = Mono.defer(() -> {
+            System.out.println("calc");
+            return Mono.just("value").doOnSubscribe(subscription -> {
+                System.out.println("sbuscribed");
+            });
+        });
+        System.out.println("after created");
+        defer.subscribe(s -> {
+            System.out.println("value: " + s);
+        });
 
     }
 

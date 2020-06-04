@@ -35,7 +35,6 @@ import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.LinkedHashMap;
@@ -56,11 +55,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
 
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
+    private final DataFetchingConfiguration dataFetchingConfiguration;
 
-    private final Map<FieldCoordinates, Function<Object, Mono<Object>>> dataFetchers;
 
-    public BatchedExecutionStrategy2(Map<FieldCoordinates, Function<Object, Mono<Object>>> dataFetchers) {
-        this.dataFetchers = dataFetchers;
+    public BatchedExecutionStrategy2(DataFetchingConfiguration dataFetchingConfiguration) {
+        this.dataFetchingConfiguration = dataFetchingConfiguration;
     }
 
     private static class OneField {
@@ -85,16 +84,44 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
     private static class Tracker {
-        private Deque<OneField> fieldsToFetch = new LinkedList<>();
+        private final Deque<OneField> fieldsToFetch = new LinkedList<>();
+        private final Map<NormalizedField, Integer> nonNullCount = new LinkedHashMap<>();
+
+        private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
 
         public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
-//            oneField.listener = oneField.resultMono.cache();
             return oneField.resultMono.cache().doOnSubscribe(subscription -> {
                 System.out.println("subscribed to " + executionPath);
             });
+        }
+
+        public void incrementNonNullCount(NormalizedField normalizedField) {
+            nonNullCount.put(normalizedField, nonNullCount.getOrDefault(normalizedField, 0) + 1);
+        }
+
+        public int addBatch(NormalizedField normalizedField, OneField oneField) {
+            List<OneField> oneFields = batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>());
+            oneFields.add(oneField);
+            return oneFields.size();
+        }
+
+        public void getNonNullC(NormalizedField normalizedField) {
+            nonNullCount.put(normalizedField, nonNullCount.getOrDefault(normalizedField, 0) + 1);
+        }
+
+        public long decrementNonNullCount(NormalizedField normalizedField) {
+            if (normalizedField == null) {
+                return 0;
+            }
+            if (nonNullCount.getOrDefault(normalizedField, 0) == 0) {
+                return 0;
+            }
+            int value = nonNullCount.getOrDefault(normalizedField, 0) - 1;
+            nonNullCount.put(normalizedField, value);
+            return value;
         }
     }
 
@@ -149,19 +176,16 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 monoChildren.add(executionResultNode);
             }
 
-            MonoProcessor<String> result = MonoProcessor.create();
-
-            fetchFields(tracker, result, 1);
-
-//            return result.flatMap(ignored -> {
-            return Flux.concat(monoChildren).collectList().map(children -> {
+            Mono<Map<String, Object>> cache = Flux.concat(monoChildren).collectList().map(children -> {
                 Map<String, Object> map = new LinkedHashMap<>();
                 for (Tuple2<String, Object> tuple : children) {
                     map.put(tuple.getT1(), tuple.getT2());
                 }
                 return map;
-            });
-//            });
+            }).cache();
+            cache.subscribe();
+            fetchFields(executionContext, normalizedQueryFromAst, tracker);
+            return cache;
         }).subscribeOn(processingScheduler);
     }
 
@@ -175,68 +199,109 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         }
     }
 
-    private void fetchFields(Tracker tracker,
-                             MonoProcessor<String> result,
-                             int level) {
-        System.out.println("start fetch fields at level " + level + " size: " + tracker.fieldsToFetch.size() + " = " + tracker.fieldsToFetch);
-        // everything happens only in one thread
+    private void fetchFields(ExecutionContext executionContext,
+                             NormalizedQueryFromAst normalizedQueryFromAst,
+                             Tracker tracker) {
+        if (tracker.fieldsToFetch.size() == 0) {
+            return;
+        }
+//        System.out.println("start fetch fields at level " + level + " size: " + tracker.fieldsToFetch.size() + " = " + tracker.fieldsToFetch);
         AtomicInteger count = new AtomicInteger(tracker.fieldsToFetch.size());
-//        Deque<List<OneField>> batches = groupIntoBatches(tracker.fieldsToFetch);
         while (!tracker.fieldsToFetch.isEmpty()) {
 //            List<OneField> batch = batches.poll();
 
             OneField oneField = tracker.fieldsToFetch.poll();
-            FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
-            Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
-            Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-            mono
-                    .publishOn(fetchingScheduler)
-                    .publishOn(processingScheduler)
-                    .subscribe(resolvedObject -> {
-                        // this re
-                        oneField.resultMono.onNext(resolvedObject);
-                        oneField.resultMono.subscribe(o -> {
-//                            System.out.println("Got " + oneField.executionPath);
-                            // this means we are waiting per level
-                            count.decrementAndGet();
-                            if (count.get() == 0 && tracker.fieldsToFetch.size() == 0) {
-                                System.out.println("finished overall");
-                                result.onNext("finished");
-                            } else if (count.get() == 0 && tracker.fieldsToFetch.size() > 0) {
-                                fetchFields(tracker, result, level + 1);
-                            }
-                        });
-                    });
+            NormalizedField normalizedField = oneField.normalizedField;
+            System.out.println("fetching " + oneField.executionPath);
+
+            FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
+            if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
+                int curCount = tracker.addBatch(normalizedField, oneField);
+                int expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
+                if (curCount == expectedCount) {
+                    BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
+                    List<OneField> oneFields = tracker.batch.get(normalizedField);
+                    List<Object> sources = FpKit.map(oneFields, f -> f.source);
+                    List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
+                    List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
+                    BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
+                    Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
+                    batchedDataFetcherResultMono
+                            .publishOn(fetchingScheduler)
+                            .publishOn(processingScheduler)
+                            .subscribe(batchedDataFetcherResult -> {
+                                for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
+                                    Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
+                                    oneFields.get(i).resultMono.onNext(fetchedValue);
+                                    oneFields.get(i).resultMono.subscribe(o -> {
+                                        fetchFields(executionContext, normalizedQueryFromAst, tracker);
+                                    });
+                                }
+                            });
+
+                }
+            } else {
+                TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
+                Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+                System.out.println("trivial fetched value: " + fetchedValue);
+                oneField.resultMono.onNext(fetchedValue);
+                System.out.println("after subscribe with " + tracker.fieldsToFetch.size());
+            }
         }
+
+//            Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, normalizedField);
+//            Mono<Object> mono = objectMonoFunction.apply(oneField.source);
+//            mono
+//                    .publishOn(fetchingScheduler)
+//                    .publishOn(processingScheduler)
+//                    .subscribe(resolvedObject -> {
+//                        // this relies on the fact that there is already a real subscriber to
+//                        // to the result mono
+//                        oneField.resultMono.onNext(resolvedObject);
+//                        oneField.resultMono.subscribe(o -> {
+////                            System.out.println("Got " + oneField.executionPath);
+//                            // this means we are waiting per level
+////                            count.decrementAndGet();
+////                            if (count.get() == 0 && tracker.fieldsToFetch.size() == 0) {
+////                                System.out.println("finished overall " + tracker.nonNullCount);
+////
+////                                result.onNext("finished");
+////                            } else if (count.get() == 0 && tracker.fieldsToFetch.size() > 0) {
+//                            fetchFields(executionContext, normalizedQueryFromAst, tracker);
+////                            }
+//                        });
+//                    });
     }
 
-    private Deque<List<OneField>> groupIntoBatches(Collection<OneField> fields) {
-        Map<FieldCoordinates, List<OneField>> fieldCoordinatesListMap = FpKit.groupingBy(fields,
-                oneField -> coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition()));
-        return new LinkedList<>(fieldCoordinatesListMap.values());
-    }
+//}
 
-    private Mono<List<Object>> fetchBatch(List<OneField> batch) {
-        return null;
-    }
+//    private Deque<List<OneField>> groupIntoBatches(Collection<OneField> fields) {
+//        Map<FieldCoordinates, List<OneField>> fieldCoordinatesListMap = FpKit.groupingBy(fields,
+//                oneField -> coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition()));
+//        return new LinkedList<>(fieldCoordinatesListMap.values());
+//    }
 
-    private Mono<Object> fetchSingleValue(OneField oneField) {
-        FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
-        Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
-        Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-        return mono;
-    }
+//    private Mono<List<Object>> fetchBatch(List<OneField> batch) {
+//        return null;
+//    }
+//
+//    private Mono<Object> fetchSingleValue(OneField oneField) {
+//        FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
+//        Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
+//        Mono<Object> mono = objectMonoFunction.apply(oneField.source);
+//        return mono;
+//    }
 
-    private Function<Object, Mono<Object>> getDataFetcher(FieldCoordinates coordinates, NormalizedField normalizedField) {
-        Function<Object, Mono<Object>> objectMonoFunction = dataFetchers.get(coordinates);
-        if (objectMonoFunction != null) {
-            return objectMonoFunction;
-        }
-        return (source) -> {
-            Map map = (Map) source;
-            return Mono.just(map.get(normalizedField.getResultKey()));
-        };
-    }
+//    private Function<Object, Mono<Object>> getDataFetcher(FieldCoordinates coordinates, NormalizedField normalizedField) {
+//        Function<Object, Mono<Object>> objectMonoFunction = dataFetchers.get(coordinates);
+//        if (objectMonoFunction != null) {
+//            return objectMonoFunction;
+//        }
+//        return (source) -> {
+//            Map map = (Map) source;
+//            return Mono.just(map.get(normalizedField.getResultKey()));
+//        };
+//    }
 
 
     private Mono<Object> fetchAndAnalyzeField(ExecutionContext context,
@@ -252,6 +317,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
+        System.out.println("add value to fetch with " + executionPath);
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
             System.out.println("WORKER: Got value for " + executionPath);
             return resolved;
@@ -309,11 +375,13 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         if (isList(curType)) {
             return analyzeList(executionContext, tracker, toAnalyze, (GraphQLList) curType, normalizedField, normalizedQueryFromAst, executionPath);
         } else if (curType instanceof GraphQLScalarType) {
+            tracker.incrementNonNullCount(normalizedField);
             return Mono.just(analyzeScalarValue(toAnalyze, (GraphQLScalarType) curType, normalizedField, executionPath));
         } else if (curType instanceof GraphQLEnumType) {
+            tracker.incrementNonNullCount(normalizedField);
             return Mono.just(analyzeEnumValue(toAnalyze, (GraphQLEnumType) curType, normalizedField, executionPath));
         }
-
+        tracker.incrementNonNullCount(normalizedField);
 
         GraphQLObjectType resolvedObjectType = resolveType(executionContext, toAnalyze, curType);
         return resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, toAnalyze, executionPath);
