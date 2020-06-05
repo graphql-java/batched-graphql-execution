@@ -1,6 +1,7 @@
 import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -108,16 +109,24 @@ public class Test {
 //            System.out.println(s + " a " + Thread.currentThread());
 //        });
 //
+
+        MonoProcessor<String> source = MonoProcessor.create();
         Mono<String> defer = Mono.defer(() -> {
-            System.out.println("calc");
-            return Mono.just("value").doOnSubscribe(subscription -> {
-                System.out.println("sbuscribed");
-            });
-        });
+            return source;
+        }).map(s -> {
+            System.out.println("mapped value " + s);
+            return s;
+        }).defaultIfEmpty("DEFAULT");
         System.out.println("after created");
         defer.subscribe(s -> {
             System.out.println("value: " + s);
+        }, throwable -> {
+            System.out.println("throwable " + throwable);
+        }, () -> {
+            System.out.println("completed ");
         });
+        source.onNext(null);
+
 
     }
 
