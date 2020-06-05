@@ -1,5 +1,7 @@
 package graphql.consulting.batched;
 
+import graphql.ExecutionResult;
+import graphql.ExecutionResultImpl;
 import graphql.GraphQLError;
 import graphql.Scalars;
 import graphql.SerializationError;
@@ -11,8 +13,6 @@ import graphql.consulting.batched.result.NonNullableFieldWasNullError;
 import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
 import graphql.execution.nextgen.ExecutionStrategy;
-import graphql.execution.nextgen.FieldSubSelection;
-import graphql.execution.nextgen.result.RootExecutionResultNode;
 import graphql.schema.CoercingSerializeException;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
@@ -35,7 +35,6 @@ import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -58,7 +57,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
     private final DataFetchingConfiguration dataFetchingConfiguration;
 
-    private static final Object NULL_VALUE = new Object() {
+    public static final Object NULL_VALUE = new Object() {
         @Override
         public String toString() {
             return "NULL_VALUE";
@@ -154,10 +153,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
     @Override
-    public CompletableFuture<graphql.execution.nextgen.result.RootExecutionResultNode> execute(
-            ExecutionContext executionContext,
-            FieldSubSelection fieldSubSelection) {
-
+    public CompletableFuture<ExecutionResult> execute(ExecutionContext executionContext) {
         NormalizedQueryFromAst normalizedQueryFromAst = NormalizedQueryFactory
                 .createNormalizedQuery(executionContext.getGraphQLSchema(),
                         executionContext.getDocument(),
@@ -173,10 +169,16 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
         return rootMono
                 .map(value -> {
-                    System.out.println("result: " + value.getT1());
-                    System.out.println("errors: " + value.getT2().getErrors().values());
-                    return new RootExecutionResultNode(Collections.emptyList());
+//                    System.out.println("result: " + value.getT1());
+//                    System.out.println("errors: " + value.getT2().getErrors().values());
+//                    return new RootExecutionResultNode(Collections.emptyList());
+                    return ExecutionResultImpl.newExecutionResult()
+                            .addErrors(new ArrayList<>(value.getT2().getErrors().values()))
+                            .data(value.getT1())
+                            .build();
+
                 })
+                .cast(ExecutionResult.class)
                 .toFuture();
     }
 
@@ -487,7 +489,9 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             children.add(analyzeFetchedValueImpl(executionContext, tracker, item, normalizedField, normalizedQueryFromAst, (GraphQLOutputType) GraphQLTypeUtil.unwrapOne(currentType), indexedPath));
             index++;
         }
-        return Flux.fromIterable(children).flatMapSequential(Function.identity()).collectList().cast(Object.class)
+        return Flux.fromIterable(children).flatMapSequential(Function.identity())
+                .collectList()
+                .cast(Object.class)
                 .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
                         throwable -> {
                             if (isNonNull) {

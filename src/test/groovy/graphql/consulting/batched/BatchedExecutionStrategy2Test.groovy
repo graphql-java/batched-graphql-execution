@@ -7,6 +7,7 @@ import spock.lang.Specification
 import java.util.concurrent.atomic.AtomicInteger
 
 import static graphql.ExecutionInput.newExecutionInput
+import static graphql.consulting.batched.BatchedExecutionStrategy2.NULL_VALUE
 import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
@@ -28,9 +29,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         def barName3 = "someBar3"
         def barName4 = "someBar4"
         def barName5 = "someBar5"
-//        def dataFetchers = [
-//                Query: [foo: { env -> fooData } as DataFetcher]
-//        ]
+
         def schema = schema("""
         type Query {
             foo: [Foo]
@@ -63,7 +62,6 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         AtomicInteger barDFCount = new AtomicInteger()
         BatchedDataFetcher barDF = { env ->
-//            println "Batched df with " + Thread.currentThread();
             return Mono.fromSupplier({
                 barDFCount.incrementAndGet();
                 println "fetching bars with env sources: " + env.sources + " in thread " + Thread.currentThread()
@@ -81,7 +79,6 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         AtomicInteger barNameDFCount = new AtomicInteger()
         BatchedDataFetcher barNameDF = { env ->
-//            println "Batched df with " + Thread.currentThread();
             return Mono.fromSupplier({
                 barNameDFCount.incrementAndGet();
                 println "fetching barNames with sources: " + env.sources + " in thread " + Thread.currentThread()
@@ -89,16 +86,20 @@ class BatchedExecutionStrategy2Test extends Specification {
             });
         } as BatchedDataFetcher;
 
-        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Foo", "bar"), barTrivialDF)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Foo", "bar"), barDF)
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Bar", "name"), barNameDF)
 
 
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
         def result = graphQL.execute(newExecutionInput(query))
         then:
-//        barDFCount.get() == 1
+        barDFCount.get() == 1
         barNameDFCount.get() == 1
-//        result.getData() == [foo: fooData]
+        result.getData() == [foo: [[id: "fooId1", bar: [[id: "barId1", name: "someBar1"], [id: "barId2", name: "someBar2"]]],
+                                   NULL_VALUE,
+                                   [id: "fooId2", bar: [[id: "barId3", name: "someBar3"], [id: "barId4", name: "someBar4"], [id: "barId5", name: "someBar5"]]],
+                                   NULL_VALUE]]
+
 
     }
 
