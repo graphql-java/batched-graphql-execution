@@ -208,7 +208,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             Mono<Map<String, Object>> cache = Flux.concat(monoChildren).collectList().map(children -> {
                 Map<String, Object> map = new LinkedHashMap<>();
                 for (Tuple2<String, Object> tuple : children) {
-                    map.put(tuple.getT1(), tuple.getT2());
+                    map.put(tuple.getT1(), tuple.getT2() == NULL_VALUE ? null : tuple.getT2());
                 }
                 return map;
             }).cache();
@@ -489,8 +489,12 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             children.add(analyzeFetchedValueImpl(executionContext, tracker, item, normalizedField, normalizedQueryFromAst, (GraphQLOutputType) GraphQLTypeUtil.unwrapOne(currentType), indexedPath));
             index++;
         }
+
         return Flux.fromIterable(children).flatMapSequential(Function.identity())
                 .collectList()
+                .map(objects -> {
+                    return objects.stream().map(o -> o == NULL_VALUE ? null : o).collect(Collectors.toList());
+                })
                 .cast(Object.class)
                 .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
                         throwable -> {

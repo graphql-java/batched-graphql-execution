@@ -7,7 +7,6 @@ import spock.lang.Specification
 import java.util.concurrent.atomic.AtomicInteger
 
 import static graphql.ExecutionInput.newExecutionInput
-import static graphql.consulting.batched.BatchedExecutionStrategy2.NULL_VALUE
 import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
@@ -96,9 +95,9 @@ class BatchedExecutionStrategy2Test extends Specification {
         barDFCount.get() == 1
         barNameDFCount.get() == 1
         result.getData() == [foo: [[id: "fooId1", bar: [[id: "barId1", name: "someBar1"], [id: "barId2", name: "someBar2"]]],
-                                   NULL_VALUE,
+                                   null,
                                    [id: "fooId2", bar: [[id: "barId3", name: "someBar3"], [id: "barId4", name: "someBar4"], [id: "barId5", name: "someBar5"]]],
-                                   NULL_VALUE]]
+                                   null]]
 
 
     }
