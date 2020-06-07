@@ -205,6 +205,8 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 monoChildren.add(executionResultNode);
             }
 
+            // TODO: replace with collector handling NULL_VALUE
+            // TODO: consider multiple top level fields ans subscribe eagerly
             Mono<Map<String, Object>> cache = Flux.concat(monoChildren).collectList().map(children -> {
                 Map<String, Object> map = new LinkedHashMap<>();
                 for (Tuple2<String, Object> tuple : children) {
@@ -430,7 +432,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 .collectList().map(tupleList -> {
                     Map<String, Object> map = new LinkedHashMap<>();
                     for (Tuple2<String, Object> tuple2 : tupleList) {
-                        map.put(tuple2.getT1(), tuple2.getT2());
+                        map.put(tuple2.getT1(), tuple2.getT2() == NULL_VALUE ? null : tuple2.getT2());
                     }
                     return map;
                 })
