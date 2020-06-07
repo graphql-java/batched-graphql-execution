@@ -41,6 +41,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.BinaryOperator;
@@ -56,7 +57,7 @@ import static graphql.schema.GraphQLTypeUtil.isList;
 public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
     Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
-    Scheduler processingScheduler = Schedulers.newSingle("processing-thread");
+    List<Scheduler> processingSchedulers;
 
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
     private final DataFetchingConfiguration dataFetchingConfiguration;
@@ -70,6 +71,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
     public BatchedExecutionStrategy2(DataFetchingConfiguration dataFetchingConfiguration) {
         this.dataFetchingConfiguration = dataFetchingConfiguration;
+
+        processingSchedulers = new ArrayList<>();
+        for (int i = 1; i <= Runtime.getRuntime().availableProcessors(); i++) {
+            processingSchedulers.add(Schedulers.newSingle("processing-thread-" + i));
+        }
     }
 
     private static class OneField {
@@ -100,6 +106,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
         private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
 
+        private final Scheduler scheduler;
+
+        private Tracker(Scheduler scheduler) {
+            this.scheduler = scheduler;
+        }
 
         public void addError(ExecutionPath executionPath, GraphQLError error) {
             errors.put(executionPath, error);
@@ -166,10 +177,13 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     private Mono<Tuple2<Map<String, Object>, Tracker>> fetchTopLevelFields(ExecutionContext executionContext,
                                                                            Object data,
                                                                            NormalizedQueryFromAst normalizedQueryFromAst) {
+        Scheduler scheduler = processingSchedulers.get(ThreadLocalRandom.current().nextInt(processingSchedulers.size()));
+        Tracker tracker = new Tracker(scheduler);
+        System.out.println("THREAD: " + scheduler);
+
         return Mono.defer(() -> {
             List<NormalizedField> topLevelFields = normalizedQueryFromAst.getTopLevelFields();
             ExecutionPath rootPath = ExecutionPath.rootPath();
-            Tracker tracker = new Tracker();
             List<Mono<Tuple2<String, Object>>> monoChildren = new ArrayList<>(topLevelFields.size());
             for (NormalizedField topLevelField : topLevelFields) {
                 ExecutionPath path = rootPath.segment(topLevelField.getResultKey());
@@ -195,17 +209,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             return cache.map(map -> {
                 return Tuples.of(map, tracker);
             });
-        }).subscribeOn(processingScheduler);
-    }
-
-    private static class FetchedValue {
-        Object fetchedValue;
-        OneField oneField;
-
-        public FetchedValue(Object fetchedValue, OneField oneField) {
-            this.fetchedValue = fetchedValue;
-            this.oneField = oneField;
-        }
+        }).subscribeOn(tracker.scheduler);
     }
 
     private void fetchFields(ExecutionContext executionContext,
@@ -240,7 +244,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                     Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
                     batchedDataFetcherResultMono
                             .publishOn(fetchingScheduler)
-                            .publishOn(processingScheduler)
+                            .publishOn(tracker.scheduler)
                             .subscribe(batchedDataFetcherResult -> {
                                 for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
                                     Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
@@ -577,12 +581,8 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     //
     private Collector<Object, List<Object>, List<Object>> listCollector() {
         Collector<Object, List<Object>, List<Object>> result = Collector.of((Supplier<List<Object>>) ArrayList::new,
-                (list, o) -> {
-                    list.add(maybeNullValue(o));
-                },
-                (left, right) ->
-
-                {
+                (list, o) -> list.add(maybeNullValue(o)),
+                (left, right) -> {
                     left.addAll(right);
                     return left;
                 });
