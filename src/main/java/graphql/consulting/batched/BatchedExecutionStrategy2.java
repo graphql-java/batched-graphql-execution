@@ -42,7 +42,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.BinaryOperator;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 import static graphql.schema.FieldCoordinates.coordinates;
@@ -57,7 +61,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
     private final DataFetchingConfiguration dataFetchingConfiguration;
 
-    public static final Object NULL_VALUE = new Object() {
+    private static final Object NULL_VALUE = new Object() {
         @Override
         public String toString() {
             return "NULL_VALUE";
@@ -124,33 +128,9 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             List<OneField> oneFields = batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>());
             oneFields.add(oneField);
             return oneFields.size();
-
-//            NormalizedField curParent = normalizedField.getParent();
-//            while (curParent != null) {
-//                nonNullCount.get(curParent)
-//            }
         }
-
-//        public void addBatchFieldFetched(NormalizedField normalizedField) {
-//            if (batchedFieldsFetched.contains(normalizedField)) {
-//                throw new RuntimeException("" + normalizedField + " already fetched");
-//            }
-//            this.batchedFieldsFetched.add(normalizedField);
-//        }
-//
-//
-//        public long decrementNonNullCount(NormalizedField normalizedField) {
-//            if (normalizedField == null) {
-//                return 0;
-//            }
-//            if (nonNullCount.getOrDefault(normalizedField, 0) == 0) {
-//                return 0;
-//            }
-//            int value = nonNullCount.getOrDefault(normalizedField, 0) - 1;
-//            nonNullCount.put(normalizedField, value);
-//            return value;
-//        }
     }
+
 
     @Override
     public CompletableFuture<ExecutionResult> execute(ExecutionContext executionContext) {
@@ -206,16 +186,12 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             }
 
             // TODO: replace with collector handling NULL_VALUE
-            // TODO: consider multiple top level fields ans subscribe eagerly
-            Mono<Map<String, Object>> cache = Flux.concat(monoChildren).collectList().map(children -> {
-                Map<String, Object> map = new LinkedHashMap<>();
-                for (Tuple2<String, Object> tuple : children) {
-                    map.put(tuple.getT1(), tuple.getT2() == NULL_VALUE ? null : tuple.getT2());
-                }
-                return map;
-            }).cache();
-            cache.subscribe();
-            fetchFields(executionContext, normalizedQueryFromAst, tracker);
+            monoChildren.add(Mono.defer(() -> {
+                fetchFields(executionContext, normalizedQueryFromAst, tracker);
+                return Mono.empty();
+            }));
+            Flux<Tuple2<String, Object>> flux = Flux.mergeSequential(monoChildren);
+            Mono<Map<String, Object>> cache = flux.collect(mapCollector());
             return cache.map(map -> {
                 return Tuples.of(map, tracker);
             });
@@ -429,13 +405,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         }
         return Flux.fromIterable(nodeChildrenMono)
                 .flatMapSequential(Function.identity())
-                .collectList().map(tupleList -> {
-                    Map<String, Object> map = new LinkedHashMap<>();
-                    for (Tuple2<String, Object> tuple2 : tupleList) {
-                        map.put(tuple2.getT1(), tuple2.getT2() == NULL_VALUE ? null : tuple2.getT2());
-                    }
-                    return map;
-                })
+                .collect(mapCollector())
                 .cast(Object.class)
                 .onErrorResume(error -> error instanceof NonNullableFieldWasNullError,
                         throwable -> {
@@ -492,11 +462,9 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             index++;
         }
 
+
         return Flux.fromIterable(children).flatMapSequential(Function.identity())
-                .collectList()
-                .map(objects -> {
-                    return objects.stream().map(o -> o == NULL_VALUE ? null : o).collect(Collectors.toList());
-                })
+                .collect(listCollector())
                 .cast(Object.class)
                 .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
                         throwable -> {
@@ -585,6 +553,40 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 return Mono.just(NULL_VALUE);
             }
         }
+    }
+
+    private Collector<Tuple2<String, Object>, Map<String, Object>, Map<String, Object>> mapCollector() {
+        Supplier<Map<String, Object>> supplier = LinkedHashMap::new;
+        BiConsumer<Map<String, Object>, Tuple2<String, Object>> acc = (map, tuple) -> {
+            map.put(tuple.getT1(), maybeNullValue(tuple.getT2()));
+        };
+
+        return Collector.of(supplier, acc, throwingMerger());
+    }
+
+    private static <T> BinaryOperator<T> throwingMerger() {
+        return (u, v) -> {
+            throw new IllegalStateException(String.format("Duplicate key %s", u));
+        };
+    }
+
+    private Object maybeNullValue(Object o) {
+        return o == NULL_VALUE ? null : o;
+    }
+
+    //
+    private Collector<Object, List<Object>, List<Object>> listCollector() {
+        Collector<Object, List<Object>, List<Object>> result = Collector.of((Supplier<List<Object>>) ArrayList::new,
+                (list, o) -> {
+                    list.add(maybeNullValue(o));
+                },
+                (left, right) ->
+
+                {
+                    left.addAll(right);
+                    return left;
+                });
+        return result;
     }
 
 
