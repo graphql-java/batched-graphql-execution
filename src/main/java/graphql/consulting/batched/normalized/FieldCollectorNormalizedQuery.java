@@ -14,6 +14,7 @@ import graphql.language.OperationDefinition;
 import graphql.language.Selection;
 import graphql.language.SelectionSet;
 import graphql.schema.GraphQLCompositeType;
+import graphql.schema.GraphQLFieldDefinition;
 import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLSchema;
@@ -30,12 +31,14 @@ import java.util.Map;
 import java.util.Set;
 
 import static graphql.Assert.assertNotNull;
+import static graphql.introspection.Introspection.SchemaMetaFieldDef;
+import static graphql.introspection.Introspection.TypeMetaFieldDef;
 import static graphql.introspection.Introspection.TypeNameMetaFieldDef;
 
 
 /**
- * Creates a the direct NormalizedQueryFields children, this means it goes only one level deep!
- * This also means the NormalizedQueryFields returned dont have any children.
+ * Creates a the direct NormalizedFields children, this means it goes only one level deep!
+ * This also means the NormalizedFields returned dont have any children.
  */
 @Internal
 public class FieldCollectorNormalizedQuery {
@@ -188,11 +191,6 @@ public class FieldCollectorNormalizedQuery {
         if (!conditionalNodes.shouldInclude(parameters.getVariables(), field.getDirectives())) {
             return;
         }
-        if (field.getName().equals(TypeNameMetaFieldDef.getName()) ||
-                field.getName().equals(Introspection.SchemaMetaFieldDef.getName()) ||
-                field.getName().equals(Introspection.TypeMetaFieldDef.getName())) {
-            return;
-        }
         String name = getFieldEntryKey(field);
         result.computeIfAbsent(name, ignored -> new LinkedHashMap<>());
         Map<GraphQLObjectType, NormalizedField> existingFieldWTC = result.get(name);
@@ -206,18 +204,22 @@ public class FieldCollectorNormalizedQuery {
                 MergedField updatedMergedField = mergedField1.transform(builder -> builder.addField(field));
                 mergedFieldByNormalizedField.put(normalizedField, updatedMergedField);
 
-                // update the normalized field
-//                existingFieldWTC.put(objectType, normalizedField.transform(builder -> {
-//                    MergedField mergedField = normalizedField.getMergedField().transform(mergedFieldBuilder -> mergedFieldBuilder.addField(field));
-//                    builder.mergedField(mergedField);
-//                }));
             } else {
-
+                GraphQLFieldDefinition fieldDefinition;
+                if (field.getName().equals(TypeNameMetaFieldDef.getName())) {
+                    fieldDefinition = TypeNameMetaFieldDef;
+                } else if (field.getName().equals(Introspection.SchemaMetaFieldDef.getName())) {
+                    fieldDefinition = SchemaMetaFieldDef;
+                } else if (field.getName().equals(Introspection.TypeMetaFieldDef.getName())) {
+                    fieldDefinition = TypeMetaFieldDef;
+                } else {
+                    fieldDefinition = assertNotNull(objectType.getFieldDefinition(field.getName()), () -> String.format("no field with name %s found in object %s", field.getName(), objectType.getName()));
+                }
                 NormalizedField newFieldWTC = NormalizedField.newQueryExecutionField()
                         .alias(field.getAlias())
                         .arguments(field.getArguments())
                         .objectType(objectType)
-                        .fieldDefinition(assertNotNull(objectType.getFieldDefinition(field.getName())))
+                        .fieldDefinition(fieldDefinition)
                         .level(level)
                         .parent(parent)
                         .build();
