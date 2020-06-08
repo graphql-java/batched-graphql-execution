@@ -221,4 +221,40 @@ class BatchedExecutionStrategy2Test extends Specification {
 
     }
 
+    def "non null error bubbles up to top level"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: [Foo!]
+        }
+        type Foo {
+            bar: [Bar!]!
+        }
+        type Bar {
+            name: String!
+        }
+        """)
+
+        def query = """
+        {foo {
+            bar {
+                name
+            }
+        }}
+        """
+        def fooData = [[bar: [[name: "barName1"]]],
+                       [bar: [[name: "barName2"], [name: null]]]]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), { Mono.just(fooData) } as SingleDataFetcher)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [foo: null]
+        result.getErrors().size() == 1
+        result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
+
+    }
+
 }

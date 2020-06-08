@@ -217,11 +217,8 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         if (tracker.fieldsToFetch.size() == 0) {
             return;
         }
-//        System.out.println("start fetch fields at level " + level + " size: " + tracker.fieldsToFetch.size() + " = " + tracker.fieldsToFetch);
         AtomicInteger count = new AtomicInteger(tracker.fieldsToFetch.size());
         while (!tracker.fieldsToFetch.isEmpty()) {
-//            List<OneField> batch = batches.poll();
-
 
             OneField oneField = tracker.fieldsToFetch.poll();
             List<ExecutionPath> exPathsLeft = tracker.fieldsToFetch.stream().map(oneField1 -> oneField1.executionPath).collect(Collectors.toList());
@@ -231,8 +228,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
             if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
                 singleFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
-            }
-            if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
+            } else if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
                 batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else {
                 trivialFetchField(oneField, normalizedField, coordinates);
