@@ -56,11 +56,11 @@ import static graphql.schema.GraphQLNonNull.nonNull;
 import static graphql.schema.GraphQLTypeUtil.isList;
 
 public class BatchedExecutionStrategy2 implements ExecutionStrategy {
+    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
 
     Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
     List<Scheduler> processingSchedulers;
 
-    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
     private final DataFetchingConfiguration dataFetchingConfiguration;
     private ResolveType resolveType = new ResolveType();
 
@@ -162,9 +162,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
         return rootMono
                 .map(value -> {
-//                    System.out.println("result: " + value.getT1());
-//                    System.out.println("errors: " + value.getT2().getErrors().values());
-//                    return new RootExecutionResultNode(Collections.emptyList());
                     return ExecutionResultImpl.newExecutionResult()
                             .addErrors(new ArrayList<>(value.getT2().getErrors().values()))
                             .data(value.getT1())
@@ -267,60 +264,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             }
         }
 
-//            Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, normalizedField);
-//            Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-//            mono
-//                    .publishOn(fetchingScheduler)
-//                    .publishOn(processingScheduler)
-//                    .subscribe(resolvedObject -> {
-//                        // this relies on the fact that there is already a real subscriber to
-//                        // to the result mono
-//                        oneField.resultMono.onNext(resolvedObject);
-//                        oneField.resultMono.subscribe(o -> {
-////                            System.out.println("Got " + oneField.executionPath);
-//                            // this means we are waiting per level
-////                            count.decrementAndGet();
-////                            if (count.get() == 0 && tracker.fieldsToFetch.size() == 0) {
-////                                System.out.println("finished overall " + tracker.nonNullCount);
-////
-////                                result.onNext("finished");
-////                            } else if (count.get() == 0 && tracker.fieldsToFetch.size() > 0) {
-//                            fetchFields(executionContext, normalizedQueryFromAst, tracker);
-////                            }
-//                        });
-//                    });
     }
-
-//}
-
-//    private Deque<List<OneField>> groupIntoBatches(Collection<OneField> fields) {
-//        Map<FieldCoordinates, List<OneField>> fieldCoordinatesListMap = FpKit.groupingBy(fields,
-//                oneField -> coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition()));
-//        return new LinkedList<>(fieldCoordinatesListMap.values());
-//    }
-
-//    private Mono<List<Object>> fetchBatch(List<OneField> batch) {
-//        return null;
-//    }
-//
-//    private Mono<Object> fetchSingleValue(OneField oneField) {
-//        FieldCoordinates coordinates = coordinates(oneField.normalizedField.getObjectType(), oneField.normalizedField.getFieldDefinition());
-//        Function<Object, Mono<Object>> objectMonoFunction = getDataFetcher(coordinates, oneField.normalizedField);
-//        Mono<Object> mono = objectMonoFunction.apply(oneField.source);
-//        return mono;
-//    }
-
-//    private Function<Object, Mono<Object>> getDataFetcher(FieldCoordinates coordinates, NormalizedField normalizedField) {
-//        Function<Object, Mono<Object>> objectMonoFunction = dataFetchers.get(coordinates);
-//        if (objectMonoFunction != null) {
-//            return objectMonoFunction;
-//        }
-//        return (source) -> {
-//            Map map = (Map) source;
-//            return Mono.just(map.get(normalizedField.getResultKey()));
-//        };
-//    }
-
 
     private Mono<Object> fetchAndAnalyzeField(ExecutionContext context,
                                               Tracker tracker,
@@ -337,7 +281,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
         System.out.println("new fetch: " + executionPath);
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
-//            System.out.println("WORKER: Got value for " + executionPath);
             return resolved;
         });
     }
@@ -368,7 +311,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             System.out.println("ERROR: " + executionPath + " not allowed to be null");
             return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == NULL_VALUE || toAnalyze == null) {
-//            return Mono.just(createNullERN(normalizedField, executionPath));
             return Mono.just(NULL_VALUE);
         }
 
@@ -565,7 +507,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         return o == NULL_VALUE ? null : o;
     }
 
-    //
     private Collector<Object, List<Object>, List<Object>> listCollector() {
         Collector<Object, List<Object>, List<Object>> result = Collector.of((Supplier<List<Object>>) ArrayList::new,
                 (list, o) -> list.add(maybeNullValue(o)),
