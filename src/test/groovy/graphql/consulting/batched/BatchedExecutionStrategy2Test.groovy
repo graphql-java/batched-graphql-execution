@@ -333,4 +333,46 @@ class BatchedExecutionStrategy2Test extends Specification {
 
     }
 
+    def "two top level fields with aliases"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: Foo!
+        }
+        type Foo {
+            bar: Bar!
+        }
+        type Bar {
+            name: String!
+        }
+        """)
+
+        def query = """
+        {foo1: foo {bar{name}}
+            foo2: foo {bar{name}}
+        }
+        """
+        def fooData1 = [bar: [name: "barName1"]]
+        def fooData2 = [bar: [name: "barName1"]]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
+
+        int counter = 1
+
+        def fooDF = {
+            if (counter == 1) {
+                return Mono.just(fooData1)
+            }
+            return Mono.just(fooData2)
+        } as SingleDataFetcher
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), fooDF)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [foo1: fooData1, foo2: fooData2]
+        result.getErrors().size() == 0
+
+    }
+
 }
