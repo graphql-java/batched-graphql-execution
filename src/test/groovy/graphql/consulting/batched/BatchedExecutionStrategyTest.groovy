@@ -12,7 +12,7 @@ import static graphql.ExecutionInput.newExecutionInput
 import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
-class BatchedExecutionStrategy2Test extends Specification {
+class BatchedExecutionStrategyTest extends Specification {
 
     def "two level batching"() {
         def fooData = [[id: "fooId1"],
@@ -91,7 +91,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Bar", "name"), barNameDF)
 
 
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         def result = graphQL.execute(newExecutionInput(query))
         then:
         barDFCount.get() == 1
@@ -175,7 +175,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Bar", "name"), barNameDF)
 
 
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         def result = graphQL.execute(newExecutionInput(query))
         then:
         result.getData() == [foo: [[id: "fooId1", bar: [[id: "barId1", name: "someBar1"], [id: "barId2", name: "someBar2"]]],
@@ -212,7 +212,7 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
         dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), { Mono.just(fooData) } as SingleDataFetcher)
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
@@ -248,7 +248,7 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
         dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), { Mono.just(fooData) } as SingleDataFetcher)
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
@@ -323,7 +323,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         } as BatchedDataFetcher;
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Bar", "name"), nameDF);
 
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
@@ -367,7 +367,7 @@ class BatchedExecutionStrategy2Test extends Specification {
             return Mono.just(fooData2)
         } as SingleDataFetcher
         dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), fooDF)
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
@@ -424,7 +424,7 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF)
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
@@ -482,7 +482,7 @@ class BatchedExecutionStrategy2Test extends Specification {
 
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF, true)
-        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:

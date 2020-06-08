@@ -53,8 +53,8 @@ import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLNonNull.nonNull;
 import static graphql.schema.GraphQLTypeUtil.isList;
 
-public class BatchedExecutionStrategy2 implements ExecutionStrategy {
-    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
+public class BatchedExecutionStrategy implements ExecutionStrategy {
+    private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy.class);
 
     Scheduler fetchingScheduler = Schedulers.newParallel("data-fetching-scheduler");
     List<Scheduler> processingSchedulers;
@@ -69,7 +69,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         }
     };
 
-    public BatchedExecutionStrategy2(DataFetchingConfiguration dataFetchingConfiguration) {
+    public BatchedExecutionStrategy(DataFetchingConfiguration dataFetchingConfiguration) {
         this.dataFetchingConfiguration = dataFetchingConfiguration;
 
         processingSchedulers = new ArrayList<>();
