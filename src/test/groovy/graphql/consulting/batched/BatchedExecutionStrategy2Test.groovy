@@ -1,5 +1,6 @@
 package graphql.consulting.batched
 
+import graphql.ErrorType
 import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
 import spock.lang.Specification
@@ -180,6 +181,43 @@ class BatchedExecutionStrategy2Test extends Specification {
                                    null,
                                    [id: "fooId2", bar: null],
                                    null]]
+        result.getErrors().size() == 1
+        result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
+    }
+
+    def "non null error bubbles up to the top"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: [Foo!]!
+        }
+        type Foo {
+            bar: [Bar!]!
+        }
+        type Bar {
+            name: String!
+        }
+        """)
+
+        def query = """
+        {foo {
+            bar {
+                name
+            }
+        }}
+        """
+        def fooData = [[bar: [[name: "barName1"]]],
+                       [bar: [[name: "barName2"], [name: null]]]]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), { Mono.just(fooData) } as SingleDataFetcher)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == null
+        result.getErrors().size() == 1
+        result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
 
     }
 

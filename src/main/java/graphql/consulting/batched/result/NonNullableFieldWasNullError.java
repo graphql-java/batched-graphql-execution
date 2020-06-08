@@ -49,7 +49,7 @@ public class NonNullableFieldWasNullError extends RuntimeException implements Gr
 
     @Override
     public ErrorType getErrorType() {
-        return ErrorType.DataFetchingException;
+        return ErrorType.NullValueInNonNullableField;
     }
 
     @Override

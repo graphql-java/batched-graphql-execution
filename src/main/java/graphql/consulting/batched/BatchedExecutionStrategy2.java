@@ -166,8 +166,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                             .addErrors(new ArrayList<>(value.getT2().getErrors().values()))
                             .data(value.getT1())
                             .build();
-
                 })
+                .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
+                        throwable -> Mono.just(ExecutionResultImpl.newExecutionResult()
+                                .addError((NonNullableFieldWasNullError) throwable)
+                                .build()))
                 .cast(ExecutionResult.class)
                 .toFuture();
     }
@@ -226,44 +229,81 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             NormalizedField normalizedField = oneField.normalizedField;
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
+            if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
+                singleFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
+            }
             if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
-                int curCount = tracker.addBatch(normalizedField, oneField);
-                int expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
-                if (curCount == expectedCount) {
-                    BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
-                    List<OneField> oneFields = tracker.batch.get(normalizedField);
-                    List<Object> sources = FpKit.map(oneFields, f -> f.source);
-                    List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
-                    List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
-                    System.out.println("fetching batched values for " + executionPaths);
-                    BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
-                    Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
-                    batchedDataFetcherResultMono
-                            .publishOn(fetchingScheduler)
-                            .publishOn(tracker.scheduler)
-                            .subscribe(batchedDataFetcherResult -> {
-                                for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
-                                    Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
-                                    fetchedValue = fetchedValue == null ? NULL_VALUE : fetchedValue;
-                                    oneFields.get(i).resultMono.onNext(fetchedValue);
-                                }
-                                fetchFields(executionContext, normalizedQueryFromAst, tracker);
-                            });
-
-                } else {
-                    System.out.println("not fetching batched because " + curCount + " vs " + expectedCount);
-                }
+                batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else {
-                System.out.println("fetching trivial value in thread");
-                TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
-                Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
-//                System.out.println("trivial fetched value: " + fetchedValue);
-                fetchedValue = fetchedValue == null ? NULL_VALUE : fetchedValue;
-                oneField.resultMono.onNext(fetchedValue);
-//                System.out.println("after subscribe with " + tracker.fieldsToFetch.size());
+                trivialFetchField(oneField, normalizedField, coordinates);
             }
         }
 
+    }
+
+    private void trivialFetchField(OneField oneField, NormalizedField normalizedField, FieldCoordinates coordinates) {
+        TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
+        Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+        fetchedValue = replaceNullValue(fetchedValue);
+        oneField.resultMono.onNext(fetchedValue);
+    }
+
+    private Object replaceNullValue(Object fetchedValue) {
+        return fetchedValue == null ? NULL_VALUE : fetchedValue;
+    }
+
+    private void singleFetchField(ExecutionContext executionContext,
+                                  NormalizedQueryFromAst normalizedQueryFromAst,
+                                  Tracker tracker,
+                                  OneField oneField,
+                                  NormalizedField normalizedField,
+                                  FieldCoordinates coordinates) {
+        SingleDataFetcher<?> singleDataFetcher = dataFetchingConfiguration.getSingleDataFetcher(coordinates);
+        SingleDataFetcherEnvironment singleDataFetcherEnvironment = new SingleDataFetcherEnvironment(oneField.source, oneField.normalizedField, oneField.executionPath);
+
+        singleDataFetcher
+                .get(singleDataFetcherEnvironment)
+                .publishOn(fetchingScheduler)
+                .publishOn(tracker.scheduler)
+                .subscribe(fetchedValue -> {
+                    fetchedValue = replaceNullValue(fetchedValue);
+                    oneField.resultMono.onNext(fetchedValue);
+                    fetchFields(executionContext, normalizedQueryFromAst, tracker);
+                });
+    }
+
+    private void batchFetchField(ExecutionContext executionContext,
+                                 NormalizedQueryFromAst normalizedQueryFromAst,
+                                 Tracker tracker,
+                                 OneField oneField,
+                                 NormalizedField normalizedField,
+                                 FieldCoordinates coordinates) {
+        int curCount = tracker.addBatch(normalizedField, oneField);
+        int expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
+        if (curCount == expectedCount) {
+            BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
+            List<OneField> oneFields = tracker.batch.get(normalizedField);
+            List<Object> sources = FpKit.map(oneFields, f -> f.source);
+            List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
+            List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
+            System.out.println("fetching batched values for " + executionPaths);
+            BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
+            Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
+            batchedDataFetcherResultMono
+                    .publishOn(fetchingScheduler)
+                    .publishOn(tracker.scheduler)
+                    .subscribe(batchedDataFetcherResult -> {
+                        for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
+                            Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
+                            fetchedValue = replaceNullValue(fetchedValue);
+                            oneFields.get(i).resultMono.onNext(fetchedValue);
+                        }
+                        fetchFields(executionContext, normalizedQueryFromAst, tracker);
+                    });
+
+        } else {
+            System.out.println("not fetching batched because " + curCount + " vs " + expectedCount);
+        }
     }
 
     private Mono<Object> fetchAndAnalyzeField(ExecutionContext context,

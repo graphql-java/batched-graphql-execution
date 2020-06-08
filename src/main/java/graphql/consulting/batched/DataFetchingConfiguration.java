@@ -9,6 +9,7 @@ public class DataFetchingConfiguration {
 
     private Map<FieldCoordinates, BatchedDataFetcher> batchedDataFetcherMap = new LinkedHashMap<>();
     private Map<FieldCoordinates, TrivialDataFetcher> trivialDataFetcherMap = new LinkedHashMap<>();
+    private Map<FieldCoordinates, SingleDataFetcher> singleDataFetcherMap = new LinkedHashMap<>();
 
     public void addTrivialDataFetcher(FieldCoordinates fieldCoordinates, TrivialDataFetcher trivialDataFetcher) {
         trivialDataFetcherMap.put(fieldCoordinates, trivialDataFetcher);
@@ -18,6 +19,13 @@ public class DataFetchingConfiguration {
         batchedDataFetcherMap.put(fieldCoordinates, batchedDataFetcher);
     }
 
+    public void addSingleDataFetcher(FieldCoordinates fieldCoordinates, SingleDataFetcher singleDataFetcher) {
+        singleDataFetcherMap.put(fieldCoordinates, singleDataFetcher);
+    }
+
+    public boolean isSingleFetch(FieldCoordinates fieldCoordinates) {
+        return singleDataFetcherMap.containsKey(fieldCoordinates);
+    }
 
     public boolean isFieldBatched(FieldCoordinates fieldCoordinates) {
         return batchedDataFetcherMap.containsKey(fieldCoordinates);
@@ -25,6 +33,10 @@ public class DataFetchingConfiguration {
 
     public BatchedDataFetcher getBatchedDataFetcher(FieldCoordinates fieldCoordinates) {
         return batchedDataFetcherMap.get(fieldCoordinates);
+    }
+
+    public SingleDataFetcher<?> getSingleDataFetcher(FieldCoordinates fieldCoordinates) {
+        return singleDataFetcherMap.get(fieldCoordinates);
     }
 
     public TrivialDataFetcher getTrivialDataFetcher(FieldCoordinates fieldCoordinates) {
