@@ -305,7 +305,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         def foo3 = [bar: [[bar12, bar13, null], [null, null], null, [bar14, bar15, bar16], null, [bar17, null]]]
         def foo4 = [bar: [[bar18, bar19, bar20, null], null, [bar21, null]]]
 
-        def fooData = [[foo1], null, [foo2, foo3, foo4], null]
+        def fooData = [[foo1, null, null], [null], null, [foo2, foo3, foo4], null]
 
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
         dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), { Mono.just(fooData) } as SingleDataFetcher)
