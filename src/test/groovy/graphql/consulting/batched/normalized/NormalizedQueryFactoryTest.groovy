@@ -2,6 +2,7 @@ package graphql.consulting.batched.normalized
 
 import graphql.GraphQL
 import graphql.consulting.batched.TestUtil
+import graphql.execution.MergedField
 import graphql.introspection.Introspection
 import graphql.language.Document
 import graphql.language.Field
@@ -780,6 +781,44 @@ type Dog implements Animal{
         fieldToNormalizedField.get(typeField)[0].objectType.name == "Query"
         fieldToNormalizedField.get(typeField)[0].fieldDefinition == Introspection.TypeMetaFieldDef
 
+    }
+
+    def "normalized field to MergedField is build"() {
+        given:
+        def graphQLSchema = TestUtil.schema("""
+            type Query{
+                foo: Foo
+            }
+            type Foo {
+                subFoo: String  
+                moreFoos: Foo
+            }
+        """)
+        def query = """
+            {foo { ...fooData moreFoos { ...fooData }}} fragment fooData on Foo { subFoo }
+            """
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        NormalizedQueryFactory dependencyGraph = new NormalizedQueryFactory();
+        def tree = dependencyGraph.createNormalizedQuery(graphQLSchema, document, null, [:])
+        def normalizedFieldToMergedField = tree.getNormalizedFieldToMergedField();
+        Traverser<NormalizedField> traverser = Traverser.depthFirst({ it.getChildren() });
+        List<MergedField> result = new ArrayList<>()
+        when:
+        traverser.traverse(tree.getTopLevelFields(), new TraverserVisitorStub<NormalizedField>() {
+            @Override
+            TraversalControl enter(TraverserContext<NormalizedField> context) {
+                NormalizedField normalizedField = context.thisNode();
+                result.add(normalizedFieldToMergedField[normalizedField])
+                return TraversalControl.CONTINUE;
+            }
+        });
+
+        then:
+        result.size() == 4
+        result.collect { it.getResultKey() } == ['foo', 'subFoo', 'moreFoos', 'subFoo']
     }
 
 

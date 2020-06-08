@@ -40,21 +40,21 @@ public class NormalizedQueryFactory {
 
         CollectFieldResult roots = fieldCollector.collectFromOperation(parameters, getOperationResult.operationDefinition, graphQLSchema.getQueryType());
 
-        Map<Field, List<NormalizedField>> normalizedFieldsByFieldId = new LinkedHashMap<>();
-        Map<NormalizedField, MergedField> normalizedFieldToMergeField = new LinkedHashMap<>();
+        Map<Field, List<NormalizedField>> fieldToNormalizedField = new LinkedHashMap<>();
+        Map<NormalizedField, MergedField> normalizedFieldToMergedField = new LinkedHashMap<>();
         List<NormalizedField> realRoots = new ArrayList<>();
 
         for (NormalizedField root : roots.getChildren()) {
 
             MergedField mergedField = roots.getMergedFieldByNormalized().get(root);
-            NormalizedField realRoot = buildFieldWithChildren(root, mergedField, fieldCollector, parameters, normalizedFieldsByFieldId, normalizedFieldToMergeField, 1);
+            NormalizedField realRoot = buildFieldWithChildren(root, mergedField, fieldCollector, parameters, fieldToNormalizedField, normalizedFieldToMergedField, 1);
             fixUpParentReference(realRoot);
-
-            updateByIdMap(realRoot, mergedField, normalizedFieldsByFieldId);
+            normalizedFieldToMergedField.put(realRoot, mergedField);
+            updateByAstFieldMap(realRoot, mergedField, fieldToNormalizedField);
             realRoots.add(realRoot);
         }
 
-        return new NormalizedQueryFromAst(realRoots, normalizedFieldsByFieldId, normalizedFieldToMergeField);
+        return new NormalizedQueryFromAst(realRoots, fieldToNormalizedField, normalizedFieldToMergedField);
     }
 
     private void fixUpParentReference(NormalizedField rootNormalizedField) {
@@ -80,12 +80,12 @@ public class NormalizedQueryFactory {
             normalizedFieldToMergedField.put(realChild, mergedFieldForChild);
             realChildren.add(realChild);
 
-            updateByIdMap(realChild, mergedFieldForChild, fieldToMergedField);
+            updateByAstFieldMap(realChild, mergedFieldForChild, fieldToMergedField);
         }
         return field.transform(builder -> builder.children(realChildren));
     }
 
-    private void updateByIdMap(NormalizedField normalizedField, MergedField mergedField, Map<Field, List<NormalizedField>> fieldToNormalizedField) {
+    private void updateByAstFieldMap(NormalizedField normalizedField, MergedField mergedField, Map<Field, List<NormalizedField>> fieldToNormalizedField) {
         for (Field astField : mergedField.getFields()) {
             fieldToNormalizedField.computeIfAbsent(astField, ignored -> new ArrayList<>());
             fieldToNormalizedField.get(astField).add(normalizedField);

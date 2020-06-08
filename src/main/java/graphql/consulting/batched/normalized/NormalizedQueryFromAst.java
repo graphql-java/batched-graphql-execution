@@ -30,7 +30,7 @@ public class NormalizedQueryFromAst {
         return fieldToNormalizedField;
     }
 
-    public List<NormalizedField> getNormalizedFieldsByFieldNode(Field field) {
+    public List<NormalizedField> getNormalizedFields(Field field) {
         return fieldToNormalizedField.get(field);
     }
 
