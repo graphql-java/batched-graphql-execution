@@ -434,7 +434,7 @@ class BatchedExecutionStrategy2Test extends Specification {
         result.getErrors().size() == 0
     }
 
-    def "same batched field at different normalized paths but still batched"() {
+    def "same coordinates at different normalized paths but still batched"() {
         given:
         def schema = schema("""
         type Query {
@@ -481,13 +481,13 @@ class BatchedExecutionStrategy2Test extends Specification {
         } as BatchedDataFetcher
 
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
-        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF, true)
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
-        invokedCount.get() == 2
-        nameBatches == [["author1", "author2", "author5", "author6"], ["author3", "author4", "author7", "author8"]]
+        invokedCount.get() == 1
+        nameBatches == [["author1", "author2", "author5", "author6", "author3", "author4", "author7", "author8"]]
         result.getData() == [issues: issues]
         result.getErrors().size() == 0
     }

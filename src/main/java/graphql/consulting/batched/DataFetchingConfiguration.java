@@ -11,12 +11,23 @@ public class DataFetchingConfiguration {
     private Map<FieldCoordinates, TrivialDataFetcher> trivialDataFetcherMap = new LinkedHashMap<>();
     private Map<FieldCoordinates, SingleDataFetcher> singleDataFetcherMap = new LinkedHashMap<>();
 
+    private Map<FieldCoordinates, Boolean> batchOnCoordinates = new LinkedHashMap<>();
+
     public void addTrivialDataFetcher(FieldCoordinates fieldCoordinates, TrivialDataFetcher trivialDataFetcher) {
         trivialDataFetcherMap.put(fieldCoordinates, trivialDataFetcher);
     }
 
     public void addBatchedDataFetcher(FieldCoordinates fieldCoordinates, BatchedDataFetcher batchedDataFetcher) {
+        addBatchedDataFetcher(fieldCoordinates, batchedDataFetcher, false);
+    }
+
+    public void addBatchedDataFetcher(FieldCoordinates fieldCoordinates, BatchedDataFetcher batchedDataFetcher, boolean acrossCoordinates) {
         batchedDataFetcherMap.put(fieldCoordinates, batchedDataFetcher);
+        batchOnCoordinates.put(fieldCoordinates, acrossCoordinates);
+    }
+
+    public boolean isBatchedOnCoordinates(FieldCoordinates coordinates) {
+        return batchOnCoordinates.get(coordinates);
     }
 
     public void addSingleDataFetcher(FieldCoordinates fieldCoordinates, SingleDataFetcher singleDataFetcher) {

@@ -272,11 +272,43 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                                  OneField oneField,
                                  NormalizedField normalizedField,
                                  FieldCoordinates coordinates) {
-        int curCount = tracker.addBatch(normalizedField, oneField);
-        int expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
+        int curCount;
+        int expectedCount;
+        boolean batchedOnCoordinates = dataFetchingConfiguration.isBatchedOnCoordinates(coordinates);
+        System.out.println("should batch on coordinates: " + batchedOnCoordinates);
+        List<OneField> oneFields;
+        if (batchedOnCoordinates) {
+
+            tracker.addBatch(normalizedField, oneField);
+            List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
+            System.out.println("same coordinates fields: " + fieldsWithSameCoordinates.size());
+            expectedCount = 0;
+            curCount = 0;
+            oneFields = new ArrayList<>();
+            for (NormalizedField nf : fieldsWithSameCoordinates) {
+                System.out.println("checking normalized field " + nf);
+                if (!tracker.nonNullCount.containsKey(nf.getParent())) {
+                    System.out.println("parent didn't record anything, abort");
+                    return;
+                }
+                expectedCount += tracker.nonNullCount.get(nf.getParent());
+                System.out.println("parent non null count: " + tracker.nonNullCount.get(nf.getParent()));
+                System.out.println("batch : " + tracker.getBatch(nf));
+                if (tracker.getBatch(nf) == null) {
+                    System.out.println("abort, batches is null ");
+                    return;
+                }
+                oneFields.addAll(tracker.getBatch(nf));
+            }
+            curCount = oneFields.size();
+            System.out.println("expected count: " + expectedCount + " vs curCount " + curCount);
+        } else {
+            curCount = tracker.addBatch(normalizedField, oneField);
+            expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
+            oneFields = tracker.getBatch(normalizedField);
+        }
         if (curCount == expectedCount) {
             BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
-            List<OneField> oneFields = tracker.getBatch(normalizedField);
             List<Object> sources = FpKit.map(oneFields, f -> f.source);
             List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
             List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
