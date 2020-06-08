@@ -9,7 +9,6 @@ import graphql.TypeMismatchError;
 import graphql.consulting.batched.normalized.NormalizedField;
 import graphql.consulting.batched.normalized.NormalizedQueryFactory;
 import graphql.consulting.batched.normalized.NormalizedQueryFromAst;
-import graphql.consulting.batched.result.NonNullableFieldWasNullError;
 import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
 import graphql.execution.MergedField;

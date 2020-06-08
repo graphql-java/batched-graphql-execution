@@ -1,4 +1,4 @@
-package graphql.consulting.batched.result;
+package graphql.consulting.batched;
 
 import graphql.ErrorType;
 import graphql.GraphQLError;
