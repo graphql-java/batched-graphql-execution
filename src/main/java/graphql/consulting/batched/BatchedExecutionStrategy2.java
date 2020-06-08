@@ -126,13 +126,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
             return oneField.resultMono.cache().doOnSubscribe(subscription -> {
-//                System.out.println("subscribed to " + executionPath);
             });
         }
 
         public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
             int value = nonNullCount.getOrDefault(normalizedField, 0) + 1;
-//            System.out.println("increment non null count to " + value + " for " + normalizedField + " at path " + executionPath);
             nonNullCount.put(normalizedField, value);
         }
 
@@ -180,7 +178,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                                                                            NormalizedQueryFromAst normalizedQueryFromAst) {
         Scheduler scheduler = processingSchedulers.get(ThreadLocalRandom.current().nextInt(processingSchedulers.size()));
         Tracker tracker = new Tracker(scheduler);
-        System.out.println("THREAD: " + scheduler);
 
         return Mono.defer(() -> {
             List<NormalizedField> topLevelFields = normalizedQueryFromAst.getTopLevelFields();
@@ -220,7 +217,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
             OneField oneField = tracker.fieldsToFetch.poll();
             List<ExecutionPath> exPathsLeft = tracker.fieldsToFetch.stream().map(oneField1 -> oneField1.executionPath).collect(Collectors.toList());
-            System.out.println("fetching " + oneField.executionPath + " with queue left " + exPathsLeft);
             NormalizedField normalizedField = oneField.normalizedField;
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
@@ -280,7 +276,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             List<Object> sources = FpKit.map(oneFields, f -> f.source);
             List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
             List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
-            System.out.println("fetching batched values for " + executionPaths);
             BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
             Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
             batchedDataFetcherResultMono
@@ -296,7 +291,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                     });
 
         } else {
-            System.out.println("not fetching batched because " + curCount + " vs " + expectedCount);
         }
     }
 
@@ -313,7 +307,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
     private Mono<Object> fetchValue(Object source, Tracker tracker, NormalizedField normalizedField, ExecutionPath executionPath) {
-        System.out.println("new fetch: " + executionPath);
         return tracker.addFieldToFetch(executionPath, normalizedField, source).map(resolved -> {
             return resolved;
         });
@@ -336,13 +329,11 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                                                  NormalizedQueryFromAst normalizedQueryFromAst,
                                                  GraphQLOutputType curType,
                                                  ExecutionPath executionPath) {
-        System.out.println("analyze " + toAnalyze + " for " + executionPath);
 
         boolean isNonNull = GraphQLTypeUtil.isNonNull(curType);
 
         if ((toAnalyze == NULL_VALUE || toAnalyze == null) && isNonNull) {
             NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError((GraphQLNonNull) curType, executionPath);
-            System.out.println("ERROR: " + executionPath + " not allowed to be null");
             return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == NULL_VALUE || toAnalyze == null) {
             return Mono.just(NULL_VALUE);
@@ -463,7 +454,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                                                 GraphQLType curType,
                                                 NormalizedField normalizedField,
                                                 NormalizedQueryFromAst normalizedQueryFromAst) {
-        System.out.println("resolving type for " + curType);
         MergedField mergedField = normalizedQueryFromAst.getMergedField(normalizedField);
         return resolveType.resolveType(executionContext, mergedField, source, null, curType);
     }
