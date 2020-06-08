@@ -15,8 +15,9 @@ import graphql.util.TraverserContext
 import graphql.util.TraverserVisitorStub
 import spock.lang.Specification
 
+import static graphql.schema.FieldCoordinates.coordinates
 
-class NormalizedQueryFromAstFactoryTest extends Specification {
+class NormalizedQueryFactoryTest extends Specification {
 
 
     def "test"() {
@@ -819,6 +820,37 @@ type Dog implements Animal{
         then:
         result.size() == 4
         result.collect { it.getResultKey() } == ['foo', 'subFoo', 'moreFoos', 'subFoo']
+    }
+
+    def "coordinates to NormalizedField is build"() {
+        given:
+        def graphQLSchema = TestUtil.schema("""
+            type Query{
+                foo: Foo
+            }
+            type Foo {
+                subFoo: String  
+                moreFoos: Foo
+            }
+        """)
+        def query = """
+            {foo { ...fooData moreFoos { ...fooData }}} fragment fooData on Foo { subFoo }
+            """
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        NormalizedQueryFactory dependencyGraph = new NormalizedQueryFactory();
+
+        when:
+        def tree = dependencyGraph.createNormalizedQuery(graphQLSchema, document, null, [:])
+        def coordinatesToNormalizedFields = tree.coordinatesToNormalizedFields
+
+        then:
+        coordinatesToNormalizedFields.size() == 3
+        coordinatesToNormalizedFields[coordinates("Query", "foo")].size() == 1
+        coordinatesToNormalizedFields[coordinates("Foo", "moreFoos")].size() == 1
+        coordinatesToNormalizedFields[coordinates("Foo", "subFoo")].size() == 2
     }
 
 

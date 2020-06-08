@@ -6,6 +6,7 @@ import graphql.execution.MergedField;
 import graphql.language.Document;
 import graphql.language.Field;
 import graphql.language.NodeUtil;
+import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLSchema;
 
 import java.util.ArrayList;
@@ -38,23 +39,27 @@ public class NormalizedQueryFactory {
                 .variables(variables)
                 .build();
 
-        CollectFieldResult roots = fieldCollector.collectFromOperation(parameters, getOperationResult.operationDefinition, graphQLSchema.getQueryType());
+        CollectFieldResult topLevelFields = fieldCollector.collectFromOperation(parameters, getOperationResult.operationDefinition, graphQLSchema.getQueryType());
 
         Map<Field, List<NormalizedField>> fieldToNormalizedField = new LinkedHashMap<>();
         Map<NormalizedField, MergedField> normalizedFieldToMergedField = new LinkedHashMap<>();
+        Map<FieldCoordinates, List<NormalizedField>> coordinatesToNormalizedFields = new LinkedHashMap<>();
+
         List<NormalizedField> realRoots = new ArrayList<>();
 
-        for (NormalizedField root : roots.getChildren()) {
+        for (NormalizedField topLevel : topLevelFields.getChildren()) {
 
-            MergedField mergedField = roots.getMergedFieldByNormalized().get(root);
-            NormalizedField realRoot = buildFieldWithChildren(root, mergedField, fieldCollector, parameters, fieldToNormalizedField, normalizedFieldToMergedField, 1);
-            fixUpParentReference(realRoot);
-            normalizedFieldToMergedField.put(realRoot, mergedField);
-            updateByAstFieldMap(realRoot, mergedField, fieldToNormalizedField);
-            realRoots.add(realRoot);
+            MergedField mergedField = topLevelFields.getMergedFieldByNormalized().get(topLevel);
+            NormalizedField realTopLevel = buildFieldWithChildren(topLevel, mergedField, fieldCollector, parameters, fieldToNormalizedField, normalizedFieldToMergedField, coordinatesToNormalizedFields, 1);
+            fixUpParentReference(realTopLevel);
+
+            normalizedFieldToMergedField.put(realTopLevel, mergedField);
+            FieldCoordinates coordinates = FieldCoordinates.coordinates(realTopLevel.getObjectType(), realTopLevel.getFieldDefinition());
+            coordinatesToNormalizedFields.computeIfAbsent(coordinates, k -> new ArrayList<>()).add(realTopLevel);
+            updateByAstFieldMap(realTopLevel, mergedField, fieldToNormalizedField);
+            realRoots.add(realTopLevel);
         }
-
-        return new NormalizedQueryFromAst(realRoots, fieldToNormalizedField, normalizedFieldToMergedField);
+        return new NormalizedQueryFromAst(realRoots, fieldToNormalizedField, normalizedFieldToMergedField, coordinatesToNormalizedFields);
     }
 
     private void fixUpParentReference(NormalizedField rootNormalizedField) {
@@ -70,14 +75,19 @@ public class NormalizedQueryFactory {
                                                    FieldCollectorNormalizedQueryParams fieldCollectorNormalizedQueryParams,
                                                    Map<Field, List<NormalizedField>> fieldToMergedField,
                                                    Map<NormalizedField, MergedField> normalizedFieldToMergedField,
+                                                   Map<FieldCoordinates, List<NormalizedField>> coordinatesToNormalizedFields,
                                                    int curLevel) {
         CollectFieldResult fieldsWithoutChildren = fieldCollector.collectFields(fieldCollectorNormalizedQueryParams, field, mergedField, curLevel + 1);
         List<NormalizedField> realChildren = new ArrayList<>();
         for (NormalizedField fieldWithoutChildren : fieldsWithoutChildren.getChildren()) {
             MergedField mergedFieldForChild = fieldsWithoutChildren.getMergedFieldByNormalized().get(fieldWithoutChildren);
-            NormalizedField realChild = buildFieldWithChildren(fieldWithoutChildren, mergedFieldForChild, fieldCollector, fieldCollectorNormalizedQueryParams, fieldToMergedField, normalizedFieldToMergedField, curLevel + 1);
+            NormalizedField realChild = buildFieldWithChildren(fieldWithoutChildren, mergedFieldForChild, fieldCollector, fieldCollectorNormalizedQueryParams, fieldToMergedField, normalizedFieldToMergedField, coordinatesToNormalizedFields, curLevel + 1);
             fixUpParentReference(realChild);
+
             normalizedFieldToMergedField.put(realChild, mergedFieldForChild);
+            FieldCoordinates coordinates = FieldCoordinates.coordinates(realChild.getObjectType(), realChild.getFieldDefinition());
+            coordinatesToNormalizedFields.computeIfAbsent(coordinates, k -> new ArrayList<>()).add(realChild);
+
             realChildren.add(realChild);
 
             updateByAstFieldMap(realChild, mergedFieldForChild, fieldToMergedField);
@@ -87,8 +97,7 @@ public class NormalizedQueryFactory {
 
     private void updateByAstFieldMap(NormalizedField normalizedField, MergedField mergedField, Map<Field, List<NormalizedField>> fieldToNormalizedField) {
         for (Field astField : mergedField.getFields()) {
-            fieldToNormalizedField.computeIfAbsent(astField, ignored -> new ArrayList<>());
-            fieldToNormalizedField.get(astField).add(normalizedField);
+            fieldToNormalizedField.computeIfAbsent(astField, ignored -> new ArrayList<>()).add(normalizedField);
         }
     }
 }
