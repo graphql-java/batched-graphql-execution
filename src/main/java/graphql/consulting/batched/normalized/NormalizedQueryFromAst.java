@@ -11,14 +11,14 @@ import java.util.Map;
 public class NormalizedQueryFromAst {
 
     private final List<NormalizedField> topLevelFields;
-    private final Map<Field, List<NormalizedField>> normalizedFieldsByFieldNode;
+    private final Map<Field, List<NormalizedField>> fieldToNormalizedField;
     private final Map<NormalizedField, MergedField> normalizedFieldToMergedField;
 
     public NormalizedQueryFromAst(List<NormalizedField> topLevelFields,
-                                  Map<Field, List<NormalizedField>> normalizedFieldsByFieldNode,
+                                  Map<Field, List<NormalizedField>> fieldToNormalizedField,
                                   Map<NormalizedField, MergedField> normalizedFieldToMergedField) {
         this.topLevelFields = topLevelFields;
-        this.normalizedFieldsByFieldNode = normalizedFieldsByFieldNode;
+        this.fieldToNormalizedField = fieldToNormalizedField;
         this.normalizedFieldToMergedField = normalizedFieldToMergedField;
     }
 
@@ -26,12 +26,12 @@ public class NormalizedQueryFromAst {
         return topLevelFields;
     }
 
-    public Map<Field, List<NormalizedField>> getNormalizedFieldsByFieldNode() {
-        return normalizedFieldsByFieldNode;
+    public Map<Field, List<NormalizedField>> getFieldToNormalizedField() {
+        return fieldToNormalizedField;
     }
 
     public List<NormalizedField> getNormalizedFieldsByFieldNode(Field field) {
-        return normalizedFieldsByFieldNode.get(field);
+        return fieldToNormalizedField.get(field);
     }
 
     public Map<NormalizedField, MergedField> getNormalizedFieldToMergedField() {

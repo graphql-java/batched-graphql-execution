@@ -139,6 +139,10 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
             oneFields.add(oneField);
             return oneFields.size();
         }
+
+        public List<OneField> getBatch(NormalizedField normalizedField) {
+            return batch.get(normalizedField);
+        }
     }
 
 
@@ -272,7 +276,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         int expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
         if (curCount == expectedCount) {
             BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
-            List<OneField> oneFields = tracker.batch.get(normalizedField);
+            List<OneField> oneFields = tracker.getBatch(normalizedField);
             List<Object> sources = FpKit.map(oneFields, f -> f.source);
             List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
             List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);

@@ -434,4 +434,62 @@ class BatchedExecutionStrategy2Test extends Specification {
         result.getErrors().size() == 0
     }
 
+    def "same batched field at different normalized paths but still batched"() {
+        given:
+        def schema = schema("""
+        type Query {
+            issues: [Issue]
+        }
+        type Issue {
+            authors: [User]     
+            relatedTo: Issue
+        }
+        type User {
+            name: String
+        }
+        """)
+
+        def query = """
+        { issues {
+               authors {
+                   name
+               }
+               relatedTo  {
+                    authors {
+                        name
+                    }
+               }
+            }
+        }
+        """
+
+        def issue1 = [authors: [[name: "author1"], [name: "author2"]], relatedTo: [authors: [[name: "author3"], [name: "author4"]]]]
+        def issue2 = [authors: [[name: "author5"], [name: "author6"]], relatedTo: [authors: [[name: "author7"], [name: "author8"]]]]
+
+        def issues = [issue1, issue2]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        AtomicInteger invokedCount = new AtomicInteger()
+        List<List<String>> nameBatches = new CopyOnWriteArrayList<>();
+        def nameDF = { env ->
+            println "batched df with sources " + env.sources
+            invokedCount.getAndIncrement();
+            def names = env.sources.collect({ it.name })
+            nameBatches.add(names)
+            return Mono.just(new BatchedDataFetcherResult(names))
+        } as BatchedDataFetcher
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy2(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        invokedCount.get() == 2
+        nameBatches == [["author1", "author2", "author5", "author6"], ["author3", "author4", "author7", "author8"]]
+        result.getData() == [issues: issues]
+        result.getErrors().size() == 0
+    }
+
 }
