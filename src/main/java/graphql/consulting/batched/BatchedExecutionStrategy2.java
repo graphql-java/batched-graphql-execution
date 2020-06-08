@@ -43,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
@@ -217,7 +216,6 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         if (tracker.fieldsToFetch.size() == 0) {
             return;
         }
-        AtomicInteger count = new AtomicInteger(tracker.fieldsToFetch.size());
         while (!tracker.fieldsToFetch.isEmpty()) {
 
             OneField oneField = tracker.fieldsToFetch.poll();
