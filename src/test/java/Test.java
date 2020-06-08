@@ -1,7 +1,6 @@
 import reactor.core.publisher.DirectProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -110,22 +109,41 @@ public class Test {
 //        });
 //
 
-        MonoProcessor<String> source = MonoProcessor.create();
-        Mono<String> defer = Mono.defer(() -> {
-            return source;
-        }).map(s -> {
-            System.out.println("mapped value " + s);
-            return s;
-        }).defaultIfEmpty("DEFAULT");
-        System.out.println("after created");
-        defer.subscribe(s -> {
-            System.out.println("value: " + s);
-        }, throwable -> {
-            System.out.println("throwable " + throwable);
-        }, () -> {
-            System.out.println("completed ");
+//        MonoProcessor<String> source = MonoProcessor.create();
+//        Mono<String> defer = Mono.defer(() -> {
+//            return source;
+//        }).map(s -> {
+//            System.out.println("mapped value " + s);
+//            return s;
+//        }).defaultIfEmpty("DEFAULT");
+//        System.out.println("after created");
+//        defer.subscribe(s -> {
+//            System.out.println("value: " + s);
+//        }, throwable -> {
+//            System.out.println("throwable " + throwable);
+//        }, () -> {
+//            System.out.println("completed ");
+//        });
+//        source.onNext(null);
+//
+
+        // want something  AFTER something subscribes
+        Mono<String> mono = Mono.defer(() -> {
+
+            return Mono.from(Flux.merge(Mono.fromCallable(() -> {
+                System.out.println("generate value");
+                return "VALUE";
+            }), Mono.fromCallable(() -> {
+                System.out.println("second one");
+                return "second";
+            })));
+        }).doOnSubscribe(subscription -> {
+            System.out.println("on subscribe outer");
         });
-        source.onNext(null);
+        System.out.println("subscribe");
+        mono.subscribe(s -> {
+            System.out.println("value: " + s);
+        });
 
 
     }

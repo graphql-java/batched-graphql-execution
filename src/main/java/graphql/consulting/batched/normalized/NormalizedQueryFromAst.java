@@ -12,14 +12,14 @@ public class NormalizedQueryFromAst {
 
     private final List<NormalizedField> topLevelFields;
     private final Map<Field, List<NormalizedField>> normalizedFieldsByFieldNode;
-    private final Map<NormalizedField, MergedField> mergedFieldByNormalizedFields;
+    private final Map<NormalizedField, MergedField> normalizedFieldToMergedField;
 
     public NormalizedQueryFromAst(List<NormalizedField> topLevelFields,
                                   Map<Field, List<NormalizedField>> normalizedFieldsByFieldNode,
-                                  Map<NormalizedField, MergedField> mergedFieldByNormalizedFields) {
+                                  Map<NormalizedField, MergedField> normalizedFieldToMergedField) {
         this.topLevelFields = topLevelFields;
         this.normalizedFieldsByFieldNode = normalizedFieldsByFieldNode;
-        this.mergedFieldByNormalizedFields = mergedFieldByNormalizedFields;
+        this.normalizedFieldToMergedField = normalizedFieldToMergedField;
     }
 
     public List<NormalizedField> getTopLevelFields() {
@@ -34,12 +34,12 @@ public class NormalizedQueryFromAst {
         return normalizedFieldsByFieldNode.get(field);
     }
 
-    public Map<NormalizedField, MergedField> getMergedFieldByNormalizedFields() {
-        return mergedFieldByNormalizedFields;
+    public Map<NormalizedField, MergedField> getNormalizedFieldToMergedField() {
+        return normalizedFieldToMergedField;
     }
 
-//    public List<String> getFieldIds(NormalizedField NormalizedField) {
-//        MergedField mergedField = mergedFieldByNormalizedFields.get(NormalizedField);
-//        return NodeId.getIds(mergedField);
-//    }
+    public MergedField getMergedField(NormalizedField normalizedField) {
+        return normalizedFieldToMergedField.get(normalizedField);
+    }
+
 }

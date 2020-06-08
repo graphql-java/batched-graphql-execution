@@ -12,6 +12,7 @@ import graphql.consulting.batched.normalized.NormalizedQueryFromAst;
 import graphql.consulting.batched.result.NonNullableFieldWasNullError;
 import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
+import graphql.execution.MergedField;
 import graphql.execution.nextgen.ExecutionStrategy;
 import graphql.schema.CoercingSerializeException;
 import graphql.schema.FieldCoordinates;
@@ -61,6 +62,7 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy2.class);
     private final DataFetchingConfiguration dataFetchingConfiguration;
+    private ResolveType resolveType = new ResolveType();
 
     private static final Object NULL_VALUE = new Object() {
         @Override
@@ -199,16 +201,13 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
                 monoChildren.add(executionResultNode);
             }
 
-            // TODO: replace with collector handling NULL_VALUE
             monoChildren.add(Mono.defer(() -> {
                 fetchFields(executionContext, normalizedQueryFromAst, tracker);
                 return Mono.empty();
             }));
             Flux<Tuple2<String, Object>> flux = Flux.mergeSequential(monoChildren);
-            Mono<Map<String, Object>> cache = flux.collect(mapCollector());
-            return cache.map(map -> {
-                return Tuples.of(map, tracker);
-            });
+            Mono<Map<String, Object>> resultMapMono = flux.collect(mapCollector());
+            return resultMapMono.zipWith(Mono.just(tracker));
         }).subscribeOn(tracker.scheduler);
     }
 
@@ -385,8 +384,8 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
         }
         tracker.incrementNonNullCount(normalizedField, executionPath);
 
-        GraphQLObjectType resolvedObjectType = resolveType(executionContext, toAnalyze, curTypeWithoutNonNull);
-        return resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, isNonNull, toAnalyze, executionPath);
+        return resolveType(executionContext, toAnalyze, curTypeWithoutNonNull, normalizedField, normalizedQueryFromAst)
+                .flatMap(resolvedObjectType -> resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, isNonNull, toAnalyze, executionPath));
     }
 
     private Mono<Object> resolveObject(ExecutionContext context,
@@ -483,26 +482,14 @@ public class BatchedExecutionStrategy2 implements ExecutionStrategy {
     }
 
 
-    private GraphQLObjectType resolveType(ExecutionContext executionContext, Object source, GraphQLType curType) {
-        if (curType instanceof GraphQLObjectType) {
-            return (GraphQLObjectType) curType;
-        }
-//        String underscoreTypeNameAlias = nadelContext.getUnderscoreTypeNameAlias();
-//
-//        assertTrue(source instanceof Map, "The Nadel result object MUST be a Map");
-//
-//        Map<String, Object> sourceMap = (Map<String, Object>) source;
-//        assertTrue(sourceMap.containsKey(underscoreTypeNameAlias), "The Nadel result object for interfaces and unions MUST have an aliased __typename in them");
-//
-//        Object typeName = sourceMap.get(underscoreTypeNameAlias);
-//        assertNotNull(typeName, "The Nadel result object for interfaces and unions MUST have an aliased__typename with a non null value in them");
-//
-//        GraphQLObjectType objectType = executionContext.getGraphQLSchema().getObjectType(typeName.toString());
-//        assertNotNull(objectType, "There must be an underlying graphql object type called '%s'", typeName);
-//        return objectType;
-        return null;
-
-
+    private Mono<GraphQLObjectType> resolveType(ExecutionContext executionContext,
+                                                Object source,
+                                                GraphQLType curType,
+                                                NormalizedField normalizedField,
+                                                NormalizedQueryFromAst normalizedQueryFromAst) {
+        System.out.println("resolving type for " + curType);
+        MergedField mergedField = normalizedQueryFromAst.getMergedField(normalizedField);
+        return resolveType.resolveType(executionContext, mergedField, source, null, curType);
     }
 
 
