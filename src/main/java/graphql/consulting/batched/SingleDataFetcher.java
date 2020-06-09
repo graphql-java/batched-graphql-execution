@@ -2,7 +2,7 @@ package graphql.consulting.batched;
 
 import reactor.core.publisher.Mono;
 
-public interface SingleDataFetcher<T> {
+public interface SingleDataFetcher {
 
     Mono<Object> get(SingleDataFetcherEnvironment environment);
 }

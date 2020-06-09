@@ -47,7 +47,6 @@ import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
-import java.util.stream.Collectors;
 
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLNonNull.nonNull;
@@ -62,7 +61,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     private final DataFetchingConfiguration dataFetchingConfiguration;
     private ResolveType resolveType = new ResolveType();
 
-    private static final Object NULL_VALUE = new Object() {
+    public static final Object NULL_VALUE = new Object() {
         @Override
         public String toString() {
             return "NULL_VALUE";
@@ -107,9 +106,22 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
 
         private final Scheduler scheduler;
+        private int pendingAsyncDataFetcher;
 
         private Tracker(Scheduler scheduler) {
             this.scheduler = scheduler;
+        }
+
+        public int getPendingAsyncDataFetcher() {
+            return pendingAsyncDataFetcher;
+        }
+
+        public void decrementPendingAsyncDataFetcher() {
+            pendingAsyncDataFetcher--;
+        }
+
+        public void incrementPendingAsyncDataFetcher() {
+            pendingAsyncDataFetcher++;
         }
 
         public void addError(ExecutionPath executionPath, GraphQLError error) {
@@ -121,6 +133,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }
 
         public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
+//            System.out.println("add field to fetch at " + executionPath);
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
@@ -141,6 +154,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
         public List<OneField> getBatch(NormalizedField normalizedField) {
             return batch.get(normalizedField);
+        }
+
+        public Map<NormalizedField, List<OneField>> getBatches() {
+            return batch;
         }
     }
 
@@ -213,14 +230,15 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     private void fetchFields(ExecutionContext executionContext,
                              NormalizedQueryFromAst normalizedQueryFromAst,
                              Tracker tracker) {
-        if (tracker.fieldsToFetch.size() == 0) {
-            return;
+        if (tracker.fieldsToFetch.size() == 0 && tracker.getPendingAsyncDataFetcher() == 0) {
+            System.out.println("END!!!!");
+            // this means we are at the end
+            fetchAllRemainingBatches(executionContext, normalizedQueryFromAst, tracker);
         }
         while (!tracker.fieldsToFetch.isEmpty()) {
-
             OneField oneField = tracker.fieldsToFetch.poll();
-            List<ExecutionPath> exPathsLeft = tracker.fieldsToFetch.stream().map(oneField1 -> oneField1.executionPath).collect(Collectors.toList());
             NormalizedField normalizedField = oneField.normalizedField;
+            System.out.println("fetching field at " + oneField.executionPath);
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
             if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
@@ -232,6 +250,9 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             }
         }
 
+    }
+
+    private void fetchAllRemainingBatches(ExecutionContext executionContext, NormalizedQueryFromAst normalizedQueryFromAst, Tracker tracker) {
     }
 
     private void trivialFetchField(OneField oneField, NormalizedField normalizedField, FieldCoordinates coordinates) {
@@ -251,14 +272,16 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                   OneField oneField,
                                   NormalizedField normalizedField,
                                   FieldCoordinates coordinates) {
-        SingleDataFetcher<?> singleDataFetcher = dataFetchingConfiguration.getSingleDataFetcher(coordinates);
+        SingleDataFetcher singleDataFetcher = dataFetchingConfiguration.getSingleDataFetcher(coordinates);
         SingleDataFetcherEnvironment singleDataFetcherEnvironment = new SingleDataFetcherEnvironment(oneField.source, oneField.normalizedField, oneField.executionPath);
 
+        tracker.incrementPendingAsyncDataFetcher();
         singleDataFetcher
                 .get(singleDataFetcherEnvironment)
                 .publishOn(fetchingScheduler)
                 .publishOn(tracker.scheduler)
                 .subscribe(fetchedValue -> {
+                    tracker.decrementPendingAsyncDataFetcher();
                     fetchedValue = replaceNullValue(fetchedValue);
                     oneField.resultMono.onNext(fetchedValue);
                     fetchFields(executionContext, normalizedQueryFromAst, tracker);
@@ -274,15 +297,13 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         int curCount;
         int expectedCount;
         boolean batchedOnCoordinates = dataFetchingConfiguration.isBatchedOnCoordinates(coordinates);
-        System.out.println("should batch on coordinates: " + batchedOnCoordinates);
         List<OneField> oneFields;
         if (batchedOnCoordinates) {
 
             tracker.addBatch(normalizedField, oneField);
             List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
-            System.out.println("same coordinates fields: " + fieldsWithSameCoordinates.size());
+//            System.out.println("same coordinates fields: " + fieldsWithSameCoordinates.size());
             expectedCount = 0;
-            curCount = 0;
             oneFields = new ArrayList<>();
             for (NormalizedField nf : fieldsWithSameCoordinates) {
                 System.out.println("checking normalized field " + nf);
@@ -290,6 +311,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     System.out.println("parent didn't record anything, abort");
                     return;
                 }
+                System.out.println("non null count for parent: " + nf.getParent().getPath() + " is " + tracker.nonNullCount.get(nf.getParent()));
+
                 expectedCount += tracker.nonNullCount.get(nf.getParent());
                 System.out.println("parent non null count: " + tracker.nonNullCount.get(nf.getParent()));
                 System.out.println("batch : " + tracker.getBatch(nf));
@@ -313,10 +336,12 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
             BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
             Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
+            tracker.incrementPendingAsyncDataFetcher();
             batchedDataFetcherResultMono
                     .publishOn(fetchingScheduler)
                     .publishOn(tracker.scheduler)
                     .subscribe(batchedDataFetcherResult -> {
+                        tracker.decrementPendingAsyncDataFetcher();
                         for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
                             Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
                             fetchedValue = replaceNullValue(fetchedValue);
@@ -371,6 +396,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError((GraphQLNonNull) curType, executionPath);
             return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == NULL_VALUE || toAnalyze == null) {
+//            System.out.println("null value for path: " + executionPath);
             return Mono.just(NULL_VALUE);
         }
 

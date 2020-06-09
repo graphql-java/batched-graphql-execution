@@ -46,7 +46,7 @@ public class DataFetchingConfiguration {
         return batchedDataFetcherMap.get(fieldCoordinates);
     }
 
-    public SingleDataFetcher<?> getSingleDataFetcher(FieldCoordinates fieldCoordinates) {
+    public SingleDataFetcher getSingleDataFetcher(FieldCoordinates fieldCoordinates) {
         return singleDataFetcherMap.get(fieldCoordinates);
     }
 

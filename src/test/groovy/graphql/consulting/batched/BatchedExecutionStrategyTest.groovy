@@ -3,12 +3,14 @@ package graphql.consulting.batched
 import graphql.ErrorType
 import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
+import spock.lang.Ignore
 import spock.lang.Specification
 
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 import static graphql.ExecutionInput.newExecutionInput
+import static graphql.consulting.batched.BatchedExecutionStrategy.NULL_VALUE
 import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
@@ -465,6 +467,158 @@ class BatchedExecutionStrategyTest extends Specification {
 
         def issue1 = [authors: [[name: "author1"], [name: "author2"]], relatedTo: [authors: [[name: "author3"], [name: "author4"]]]]
         def issue2 = [authors: [[name: "author5"], [name: "author6"]], relatedTo: [authors: [[name: "author7"], [name: "author8"]]]]
+
+        def issues = [issue1, issue2]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        AtomicInteger invokedCount = new AtomicInteger()
+        List<List<String>> nameBatches = new CopyOnWriteArrayList<>();
+        def nameDF = { env ->
+            println "batched df with sources " + env.sources
+            invokedCount.getAndIncrement();
+            def names = env.sources.collect({ it.name })
+            nameBatches.add(names)
+            return Mono.just(new BatchedDataFetcherResult(names))
+        } as BatchedDataFetcher
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF, true)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        invokedCount.get() == 1
+        nameBatches == [["author1", "author2", "author5", "author6", "author3", "author4", "author7", "author8"]]
+        result.getData() == [issues: issues]
+        result.getErrors().size() == 0
+    }
+
+    def "two top level fields returning null"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: String
+            bar: String
+        }
+        """)
+
+        def query = """
+        {  foo bar }
+        """
+
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+
+        SingleDataFetcher fooDF = {
+            Mono.fromCallable({
+                println "wait in thread" + Thread.currentThread()
+                Thread.sleep(10);
+                return NULL_VALUE;
+            })
+        }
+        SingleDataFetcher barDF = {
+            Mono.fromCallable({
+                println "wait in thread" + Thread.currentThread()
+                Thread.sleep(200);
+                return NULL_VALUE;
+            })
+
+        }
+
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), fooDF)
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "bar"), barDF)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [foo: null, bar: null]
+        result.getErrors().size() == 0
+    }
+
+    def "deferred fetching on one level"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: Foo
+            bar: Bar
+        }
+        type Foo {
+           subFoo: SubFoo 
+        }
+        type SubFoo {
+            leafFoo: String
+        } 
+        type Bar {
+            leafBar: String
+        }
+        """)
+
+        def query = """
+        {  foo {subFoo{leafFoo}} bar{leafBar} }
+        """
+
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+
+        SingleDataFetcher fooDF = {
+            Mono.fromCallable({
+                return [subFoo: [leafFoo: "leafFoo"]]
+            })
+        }
+        SingleDataFetcher barDF = {
+            Mono.fromCallable({
+                Thread.sleep(200);
+                return [leafBar: "leafBar"]
+            })
+
+        }
+
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "foo"), fooDF)
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Query", "bar"), barDF)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [foo: [subFoo: [leafFoo: "leafFoo"]], bar: [leafBar: "leafBar"]]
+        result.getErrors().size() == 0
+    }
+
+    @Ignore
+    def "same coordinates at different normalized paths but still batched with null values"() {
+        given:
+        def schema = schema("""
+        type Query {
+            issues: [Issue]
+        }
+        type Issue {
+            authors: [User]     
+            relatedTo: Issue
+        }
+        type User {
+            name: String
+        }
+        """)
+
+        def query = """
+        { issues {
+               authors {
+                   name
+               }
+               relatedTo  {
+                    authors {
+                        name
+                    }
+               }
+            }
+        }
+        """
+
+
+        def issue1 = [authors: [[name: "author1"], [name: "author2"]], relatedTo: null]
+        def issue2 = [authors: [[name: "author5"], [name: "author6"]], relatedTo: null]
 
         def issues = [issue1, issue2]
 
