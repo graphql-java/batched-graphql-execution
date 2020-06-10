@@ -17,6 +17,7 @@ import graphql.execution.nextgen.ExecutionStrategy;
 import graphql.schema.CoercingSerializeException;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
+import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLList;
 import graphql.schema.GraphQLNonNull;
 import graphql.schema.GraphQLObjectType;
@@ -24,6 +25,7 @@ import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLType;
 import graphql.schema.GraphQLTypeUtil;
+import graphql.schema.GraphQLUnionType;
 import graphql.util.FpKit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,9 +40,11 @@ import reactor.util.function.Tuples;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
@@ -54,6 +58,7 @@ import static graphql.Assert.assertNotNull;
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLNonNull.nonNull;
 import static graphql.schema.GraphQLTypeUtil.isList;
+import static graphql.schema.GraphQLTypeUtil.unwrapAll;
 
 public class BatchedExecutionStrategy implements ExecutionStrategy {
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy.class);
@@ -111,12 +116,12 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
     private static class Tracker {
         private final Deque<OneField> fieldsToFetch = new LinkedList<>();
-        private final Map<NormalizedField, Integer> nonNullCount = new LinkedHashMap<>();
 
         private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
         private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
 
         private final Map<NormalizedField, NFData> nfDataMap = new LinkedHashMap<>();
+        private final Map<NormalizedField, Set<GraphQLObjectType>> childTypesMap = new LinkedHashMap<>();
 
         private final Scheduler scheduler;
         private int pendingAsyncDataFetcher;
@@ -184,10 +189,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             if (parent == null) {
                 // top level fields are always finished
                 nfData.fetchingFinished = true;
-                System.out.println("top level NF " + normalizedField + " is finished");
-                if (nfData.nonNullChildren == 0) {
-                    markAllChildrenAsDone(normalizedField);
-                }
+                markNonFetchableChildrenAsDone(normalizedField, nfData);
                 return;
             }
             NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
@@ -195,23 +197,52 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 nfData.fetchingFinished = true;
                 // this means no children will be fetched => mark all children as done
                 System.out.println("NF " + normalizedField + " is finished");
-                if (nfData.nonNullChildren == 0) {
-                    markAllChildrenAsDone(normalizedField);
-                }
+                markNonFetchableChildrenAsDone(normalizedField, nfData);
             }
         }
 
-        private void markAllChildrenAsDone(NormalizedField normalizedField) {
+        private void markNonFetchableChildrenAsDone(NormalizedField normalizedField, NFData nfData) {
+            if (nfData.nonNullChildren == 0) {
+                markAllChildrenAsDone(normalizedField, false);
+                return;
+            }
+            GraphQLOutputType fieldType = normalizedField.getFieldDefinition().getType();
+            GraphQLOutputType unwrappedType = (GraphQLOutputType) unwrapAll(fieldType);
+            // we are only concerned with list of interfaces or list of unions
+            if (!GraphQLTypeUtil.isList(fieldType)) {
+                return;
+            }
+            if (!(unwrappedType instanceof GraphQLUnionType) && !(unwrappedType instanceof GraphQLInterfaceType)) {
+                return;
+            }
+            Set<GraphQLObjectType> childTypes = childTypesMap.get(normalizedField);
+            for (NormalizedField child : normalizedField.getChildren()) {
+                if (childTypes.contains(child.getObjectType())) {
+                    continue;
+                }
+                markAllChildrenAsDone(child, true);
+            }
+
+        }
+
+        private void markAllChildrenAsDone(NormalizedField normalizedField, boolean includingItself) {
             System.out.println("mark all children as done for " + normalizedField);
-            if (normalizedField.getChildren().size() > 0) {
-                List<NormalizedField> list = new ArrayList<>();
-                normalizedField.traverseSubTree(child -> {
-                    list.add(child);
-                    NFData nfData = new NFData();
-                    nfData.readyForBatching = true;
-                    nfData.fetchingFinished = true;
-                    nfDataMap.put(child, nfData);
-                });
+            List<NormalizedField> list = new ArrayList<>();
+            if (includingItself) {
+                NFData nfData = new NFData();
+                nfData.readyForBatching = true;
+                nfData.fetchingFinished = true;
+                nfDataMap.put(normalizedField, nfData);
+                list.add(normalizedField);
+            }
+            normalizedField.traverseSubTree(child -> {
+                list.add(child);
+                NFData nfData = new NFData();
+                nfData.readyForBatching = true;
+                nfData.fetchingFinished = true;
+                nfDataMap.put(child, nfData);
+            });
+            if (list.size() > 0) {
                 this.fieldsFinishedBecauseNullParents.accept(list);
             }
         }
@@ -242,6 +273,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 
         public Map<NormalizedField, List<OneField>> getBatches() {
             return batch;
+        }
+
+        public void addChildType(NormalizedField normalizedField, GraphQLObjectType resolvedObjectType) {
+            childTypesMap.computeIfAbsent(normalizedField, k -> new LinkedHashSet<>()).add(resolvedObjectType);
         }
     }
 
@@ -537,7 +572,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         tracker.incrementNonNullCount(normalizedField, executionPath);
 
         return resolveType(executionContext, toAnalyze, curTypeWithoutNonNull, normalizedField, normalizedQueryFromAst)
-                .flatMap(resolvedObjectType -> resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, isNonNull, toAnalyze, executionPath));
+                .flatMap(resolvedObjectType -> {
+                    tracker.addChildType(normalizedField, resolvedObjectType);
+                    return resolveObject(executionContext, tracker, normalizedField, normalizedQueryFromAst, resolvedObjectType, isNonNull, toAnalyze, executionPath);
+                });
     }
 
     private Mono<Object> resolveObject(ExecutionContext context,

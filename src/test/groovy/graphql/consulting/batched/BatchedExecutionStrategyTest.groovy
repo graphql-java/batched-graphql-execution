@@ -668,7 +668,7 @@ class BatchedExecutionStrategyTest extends Specification {
 
 
         def dog = [__typename: "Dog", name: "Oscar"]
-        def cat = [__typename: "Dog", name: "Smokey"]
+        def cat = [__typename: "Cat", name: "Smokey"]
 
         def pets = [dog, cat]
 
@@ -683,4 +683,42 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getErrors().size() == 0
     }
 
+    def "interface with two different implementations but only one returned"() {
+        given:
+        def schema = schema("""
+        type Query {
+            pets: [Pet]
+        }
+        interface Pet {
+            name: String
+       }    
+        type Dog implements Pet {
+            name: String
+        }
+        type Cat implements Pet {
+            name: String
+            catProp: String
+        }
+        """)
+
+        def query = """
+        { pets {__typename name ...on Cat { catProp } }       
+        }
+        """
+
+
+        def dog = [__typename: "Dog", name: "Oscar"]
+
+        def pets = [dog]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "pets"), { pets } as TrivialDataFetcher)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [pets: pets]
+        result.getErrors().size() == 0
+    }
 }
