@@ -50,4 +50,5 @@ public class NormalizedQueryFromAst {
         return normalizedFieldToMergedField.get(normalizedField);
     }
 
+
 }

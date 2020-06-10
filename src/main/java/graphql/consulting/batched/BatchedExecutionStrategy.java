@@ -1,5 +1,6 @@
 package graphql.consulting.batched;
 
+import graphql.Assert;
 import graphql.ExecutionResult;
 import graphql.ExecutionResultImpl;
 import graphql.GraphQLError;
@@ -44,10 +45,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 import java.util.function.BinaryOperator;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
 
+import static graphql.Assert.assertNotNull;
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLNonNull.nonNull;
 import static graphql.schema.GraphQLTypeUtil.isList;
@@ -98,6 +101,14 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }
     }
 
+    private static class NFData {
+        public int isCurrentlyFetchingCount;
+        public int fetchingFinishedCount;
+        public boolean readyForBatching;
+        public boolean fetchingFinished;
+        public int nonNullChildren;
+    }
+
     private static class Tracker {
         private final Deque<OneField> fieldsToFetch = new LinkedList<>();
         private final Map<NormalizedField, Integer> nonNullCount = new LinkedHashMap<>();
@@ -105,11 +116,20 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
         private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
 
+        private final Map<NormalizedField, NFData> nfDataMap = new LinkedHashMap<>();
+
         private final Scheduler scheduler;
         private int pendingAsyncDataFetcher;
 
+        private Consumer<List<NormalizedField>> fieldsFinishedBecauseNullParents;
+
         private Tracker(Scheduler scheduler) {
             this.scheduler = scheduler;
+        }
+
+        public void setFieldsFinishedBecauseNullParents(Consumer<List<NormalizedField>> fieldsFinishedBecauseNullParents) {
+            Assert.assertNull(this.fieldsFinishedBecauseNullParents);
+            this.fieldsFinishedBecauseNullParents = fieldsFinishedBecauseNullParents;
         }
 
         public int getPendingAsyncDataFetcher() {
@@ -141,15 +161,79 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             });
         }
 
-        public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
-            int value = nonNullCount.getOrDefault(normalizedField, 0) + 1;
-            nonNullCount.put(normalizedField, value);
+        public void fetchingStarted(NormalizedField normalizedField) {
+            NFData nfData = nfDataMap.computeIfAbsent(normalizedField, k -> new NFData());
+            nfData.isCurrentlyFetchingCount++;
+            NormalizedField parent = normalizedField.getParent();
+            if (parent == null) {
+                nfData.readyForBatching = true;
+                return;
+            }
+            NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
+            if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.isCurrentlyFetchingCount) {
+                nfData.readyForBatching = true;
+                System.out.println("NF " + normalizedField + " is finished");
+            }
         }
 
-        public int addBatch(NormalizedField normalizedField, OneField oneField) {
-            List<OneField> oneFields = batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>());
-            oneFields.add(oneField);
-            return oneFields.size();
+        public void fetchingFinished(NormalizedField normalizedField, ExecutionPath executionPath) {
+            System.out.println("Fetching finished at " + executionPath);
+            NFData nfData = nfDataMap.get(normalizedField);
+            nfData.fetchingFinishedCount++;
+            NormalizedField parent = normalizedField.getParent();
+            if (parent == null) {
+                // top level fields are always finished
+                nfData.fetchingFinished = true;
+                System.out.println("top level NF " + normalizedField + " is finished");
+                if (nfData.nonNullChildren == 0) {
+                    markAllChildrenAsDone(normalizedField);
+                }
+                return;
+            }
+            NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
+            if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.fetchingFinishedCount) {
+                nfData.fetchingFinished = true;
+                // this means no children will be fetched => mark all children as done
+                System.out.println("NF " + normalizedField + " is finished");
+                if (nfData.nonNullChildren == 0) {
+                    markAllChildrenAsDone(normalizedField);
+                }
+            }
+        }
+
+        private void markAllChildrenAsDone(NormalizedField normalizedField) {
+            System.out.println("mark all children as done for " + normalizedField);
+            if (normalizedField.getChildren().size() > 0) {
+                List<NormalizedField> list = new ArrayList<>();
+                normalizedField.traverseSubTree(child -> {
+                    list.add(child);
+                    NFData nfData = new NFData();
+                    nfData.readyForBatching = true;
+                    nfData.fetchingFinished = true;
+                    nfDataMap.put(child, nfData);
+                });
+                this.fieldsFinishedBecauseNullParents.accept(list);
+            }
+        }
+
+        public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
+            nfDataMap.computeIfAbsent(normalizedField, k -> new NFData()).nonNullChildren++;
+        }
+
+        public int getNonNullCount(NormalizedField normalizedField) {
+            return nfDataMap.computeIfAbsent(normalizedField, k -> new NFData()).nonNullChildren;
+        }
+
+        public boolean isNormalizedFieldFinishedFetching(NormalizedField normalizedField) {
+            return nfDataMap.containsKey(normalizedField) && nfDataMap.get(normalizedField).fetchingFinished;
+        }
+
+        public boolean isReadyForBatching(NormalizedField normalizedField) {
+            return nfDataMap.containsKey(normalizedField) && nfDataMap.get(normalizedField).readyForBatching;
+        }
+
+        public void addBatch(NormalizedField normalizedField, OneField oneField) {
+            batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>()).add(oneField);
         }
 
         public List<OneField> getBatch(NormalizedField normalizedField) {
@@ -227,18 +311,31 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }).subscribeOn(tracker.scheduler);
     }
 
+    private void fieldsFinishedBecauseParentIsNull(ExecutionContext executionContext, Tracker tracker) {
+
+    }
+
     private void fetchFields(ExecutionContext executionContext,
                              NormalizedQueryFromAst normalizedQueryFromAst,
                              Tracker tracker) {
+        if (tracker.fieldsFinishedBecauseNullParents == null) {
+            tracker.setFieldsFinishedBecauseNullParents((doneFields) -> {
+                System.out.println("PARENT SET TO NULL " + doneFields);
+                for (NormalizedField doneField : doneFields) {
+                    FieldCoordinates coordinates = coordinates(doneField.getObjectType(), doneField.getFieldDefinition());
+                }
+            });
+        }
+
         if (tracker.fieldsToFetch.size() == 0 && tracker.getPendingAsyncDataFetcher() == 0) {
             System.out.println("END!!!!");
             // this means we are at the end
-            fetchAllRemainingBatches(executionContext, normalizedQueryFromAst, tracker);
         }
         while (!tracker.fieldsToFetch.isEmpty()) {
             OneField oneField = tracker.fieldsToFetch.poll();
             NormalizedField normalizedField = oneField.normalizedField;
             System.out.println("fetching field at " + oneField.executionPath);
+            tracker.fetchingStarted(normalizedField);
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
             if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
@@ -246,20 +343,19 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             } else if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
                 batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else {
-                trivialFetchField(oneField, normalizedField, coordinates);
+                trivialFetchField(tracker, oneField, normalizedField, coordinates);
             }
         }
 
     }
 
-    private void fetchAllRemainingBatches(ExecutionContext executionContext, NormalizedQueryFromAst normalizedQueryFromAst, Tracker tracker) {
-    }
 
-    private void trivialFetchField(OneField oneField, NormalizedField normalizedField, FieldCoordinates coordinates) {
+    private void trivialFetchField(Tracker tracker, OneField oneField, NormalizedField normalizedField, FieldCoordinates coordinates) {
         TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
         Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
         fetchedValue = replaceNullValue(fetchedValue);
         oneField.resultMono.onNext(fetchedValue);
+        tracker.fetchingFinished(normalizedField, oneField.executionPath);
     }
 
     private Object replaceNullValue(Object fetchedValue) {
@@ -284,8 +380,28 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     tracker.decrementPendingAsyncDataFetcher();
                     fetchedValue = replaceNullValue(fetchedValue);
                     oneField.resultMono.onNext(fetchedValue);
+                    tracker.fetchingFinished(normalizedField, oneField.executionPath);
                     fetchFields(executionContext, normalizedQueryFromAst, tracker);
                 });
+    }
+
+    private void checkBatchOnCoordinates(ExecutionContext executionContext, FieldCoordinates coordinates, NormalizedQueryFromAst normalizedQueryFromAst, Tracker tracker) {
+        if (!dataFetchingConfiguration.isBatchedOnCoordinates(coordinates)) {
+            return;
+        }
+        List<OneField> oneFields;
+        List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
+        oneFields = new ArrayList<>();
+        for (NormalizedField nf : fieldsWithSameCoordinates) {
+            if (!tracker.isReadyForBatching(nf)) {
+                System.out.println("abort because " + nf + " is not ready");
+                return;
+            }
+            oneFields.addAll(tracker.getBatch(nf));
+        }
+        batchImpl(executionContext, normalizedQueryFromAst, tracker, coordinates, oneFields);
+
+
     }
 
     private void batchFetchField(ExecutionContext executionContext,
@@ -294,64 +410,62 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                  OneField oneField,
                                  NormalizedField normalizedField,
                                  FieldCoordinates coordinates) {
-        int curCount;
-        int expectedCount;
-        boolean batchedOnCoordinates = dataFetchingConfiguration.isBatchedOnCoordinates(coordinates);
+        boolean isReady;
         List<OneField> oneFields;
-        if (batchedOnCoordinates) {
+        tracker.addBatch(normalizedField, oneField);
 
-            tracker.addBatch(normalizedField, oneField);
+        if (dataFetchingConfiguration.isBatchedOnCoordinates(coordinates)) {
             List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
-//            System.out.println("same coordinates fields: " + fieldsWithSameCoordinates.size());
-            expectedCount = 0;
             oneFields = new ArrayList<>();
             for (NormalizedField nf : fieldsWithSameCoordinates) {
-                System.out.println("checking normalized field " + nf);
-                if (!tracker.nonNullCount.containsKey(nf.getParent())) {
-                    System.out.println("parent didn't record anything, abort");
+                if (!tracker.isReadyForBatching(nf)) {
+                    System.out.println("abort because " + nf + " is not ready");
                     return;
                 }
-                System.out.println("non null count for parent: " + nf.getParent().getPath() + " is " + tracker.nonNullCount.get(nf.getParent()));
-
-                expectedCount += tracker.nonNullCount.get(nf.getParent());
-                System.out.println("parent non null count: " + tracker.nonNullCount.get(nf.getParent()));
-                System.out.println("batch : " + tracker.getBatch(nf));
-                if (tracker.getBatch(nf) == null) {
-                    System.out.println("abort, batches is null ");
-                    return;
+                List<OneField> batch = tracker.getBatch(nf);
+                // batch can be null for NormalizedFields which are never fetched
+                if (batch != null) {
+                    oneFields.addAll(batch);
                 }
-                oneFields.addAll(tracker.getBatch(nf));
             }
-            curCount = oneFields.size();
-            System.out.println("expected count: " + expectedCount + " vs curCount " + curCount);
+            isReady = true;
         } else {
-            curCount = tracker.addBatch(normalizedField, oneField);
-            expectedCount = tracker.nonNullCount.getOrDefault(normalizedField.getParent(), 1);
             oneFields = tracker.getBatch(normalizedField);
+            isReady = tracker.isReadyForBatching(normalizedField);
         }
-        if (curCount == expectedCount) {
-            BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
-            List<Object> sources = FpKit.map(oneFields, f -> f.source);
-            List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
-            List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
-            BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
-            Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
-            tracker.incrementPendingAsyncDataFetcher();
-            batchedDataFetcherResultMono
-                    .publishOn(fetchingScheduler)
-                    .publishOn(tracker.scheduler)
-                    .subscribe(batchedDataFetcherResult -> {
-                        tracker.decrementPendingAsyncDataFetcher();
-                        for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
-                            Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
-                            fetchedValue = replaceNullValue(fetchedValue);
-                            oneFields.get(i).resultMono.onNext(fetchedValue);
-                        }
-                        fetchFields(executionContext, normalizedQueryFromAst, tracker);
-                    });
 
-        } else {
+        if (isReady) {
+            batchImpl(executionContext, normalizedQueryFromAst, tracker, coordinates, oneFields);
         }
+    }
+
+    private void batchImpl(ExecutionContext executionContext,
+                           NormalizedQueryFromAst normalizedQueryFromAst,
+                           Tracker tracker,
+                           FieldCoordinates coordinates,
+                           List<OneField> oneFields) {
+        BatchedDataFetcher batchedDataFetcher = dataFetchingConfiguration.getBatchedDataFetcher(coordinates);
+        List<Object> sources = FpKit.map(oneFields, f -> f.source);
+        List<NormalizedField> normalizedFields = FpKit.map(oneFields, f -> f.normalizedField);
+        List<ExecutionPath> executionPaths = FpKit.map(oneFields, f -> f.executionPath);
+        BatchedDataFetcherEnvironment env = new BatchedDataFetcherEnvironment(sources, normalizedFields, executionPaths);
+        Mono<BatchedDataFetcherResult> batchedDataFetcherResultMono = batchedDataFetcher.get(env);
+        tracker.incrementPendingAsyncDataFetcher();
+        batchedDataFetcherResultMono
+                .publishOn(fetchingScheduler)
+                .publishOn(tracker.scheduler)
+                .subscribe(batchedDataFetcherResult -> {
+                    tracker.decrementPendingAsyncDataFetcher();
+                    for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
+                        Object fetchedValue = batchedDataFetcherResult.getValues().get(i);
+                        fetchedValue = replaceNullValue(fetchedValue);
+                        oneFields.get(i).resultMono.onNext(fetchedValue);
+                    }
+                    for (OneField onFieldFetched : oneFields) {
+                        tracker.fetchingFinished(onFieldFetched.normalizedField, onFieldFetched.executionPath);
+                    }
+                    fetchFields(executionContext, normalizedQueryFromAst, tracker);
+                });
     }
 
     private Mono<Object> fetchAndAnalyzeField(ExecutionContext context,
@@ -362,7 +476,14 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                               ExecutionPath executionPath) {
         // if should be batched we will add it to the list of sources that should be fetched
         return fetchValue(source, tracker, normalizedField, executionPath).flatMap(fetchedValue -> {
-            return analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath);
+            // analysis can lead to 0-n non null values at this execution path
+            // the execution path always ends with a Name
+            System.out.println("start analysis at " + executionPath + " for " + normalizedField);
+            int curNonNullCount = tracker.getNonNullCount(normalizedField);
+            return analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath).map(resolvedValue -> {
+
+                return resolvedValue;
+            });
         });
     }
 
@@ -399,6 +520,9 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
 //            System.out.println("null value for path: " + executionPath);
             return Mono.just(NULL_VALUE);
         }
+
+        //TODO: handle serialized errors correctly with respect to non null count: currently they count as non null, but
+        // should not
 
         GraphQLOutputType curTypeWithoutNonNull = (GraphQLOutputType) GraphQLTypeUtil.unwrapNonNull(curType);
         if (isList(curTypeWithoutNonNull)) {

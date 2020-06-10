@@ -29,8 +29,6 @@ public class NormalizedField {
     private NormalizedField parent;
 
 
-
-
     private NormalizedField(Builder builder) {
         this.alias = builder.alias;
         this.arguments = builder.arguments;
@@ -148,6 +146,19 @@ public class NormalizedField {
                 ", level=" + level +
                 ", path=" + path +
                 '}';
+    }
+
+    public void traverseSubTree(Consumer<NormalizedField> consumer) {
+        this.getChildren().forEach(child -> {
+            traverseImpl(child, consumer);
+        });
+    }
+
+    private void traverseImpl(NormalizedField root, Consumer<NormalizedField> consumer) {
+        consumer.accept(root);
+        root.getChildren().forEach(child -> {
+            traverseImpl(child, consumer);
+        });
     }
 
     public static class Builder {

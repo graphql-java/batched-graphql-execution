@@ -3,7 +3,6 @@ package graphql.consulting.batched
 import graphql.ErrorType
 import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
-import spock.lang.Ignore
 import spock.lang.Specification
 
 import java.util.concurrent.CopyOnWriteArrayList
@@ -586,8 +585,7 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getErrors().size() == 0
     }
 
-    @Ignore
-    def "same coordinates at different normalized paths but still batched with null values"() {
+    def "same coordinates at different normalized paths but still batched with one NF not fetched"() {
         given:
         def schema = schema("""
         type Query {
@@ -641,7 +639,7 @@ class BatchedExecutionStrategyTest extends Specification {
         def result = graphQL.execute(newExecutionInput(query))
         then:
         invokedCount.get() == 1
-        nameBatches == [["author1", "author2", "author5", "author6", "author3", "author4", "author7", "author8"]]
+        nameBatches == [["author1", "author2", "author5", "author6"]]
         result.getData() == [issues: issues]
         result.getErrors().size() == 0
     }
