@@ -29,6 +29,12 @@ class MockedWiringFactory implements WiringFactory {
         new TypeResolver() {
             @Override
             GraphQLObjectType getType(TypeResolutionEnvironment env) {
+                if (env.object instanceof Map) {
+                    def typename = env.object.__typename
+                    if (typename != null) {
+                        return env.schema.getObjectType(typename);
+                    }
+                }
                 throw new UnsupportedOperationException("Not implemented")
             }
         }
@@ -44,6 +50,12 @@ class MockedWiringFactory implements WiringFactory {
         new TypeResolver() {
             @Override
             GraphQLObjectType getType(TypeResolutionEnvironment env) {
+                if (env.object instanceof Map) {
+                    def typename = env.object.__typename
+                    if (typename != null) {
+                        return env.schema.getObjectType(typename);
+                    }
+                }
                 throw new UnsupportedOperationException("Not implemented")
             }
         }

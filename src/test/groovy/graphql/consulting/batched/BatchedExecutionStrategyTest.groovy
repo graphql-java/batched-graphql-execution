@@ -644,4 +644,43 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getErrors().size() == 0
     }
 
+    def "interface with two different implementations in list"() {
+        given:
+        def schema = schema("""
+        type Query {
+            pets: [Pet]
+        }
+        interface Pet {
+            name: String
+       }    
+        type Dog implements Pet {
+            name: String
+        }
+        type Cat implements Pet {
+            name: String
+        }
+        """)
+
+        def query = """
+        { pets {__typename name }       
+        }
+        """
+
+
+        def dog = [__typename: "Dog", name: "Oscar"]
+        def cat = [__typename: "Dog", name: "Smokey"]
+
+        def pets = [dog, cat]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "pets"), { pets } as TrivialDataFetcher)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [pets: pets]
+        result.getErrors().size() == 0
+    }
+
 }
