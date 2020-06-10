@@ -683,11 +683,12 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getErrors().size() == 0
     }
 
-    def "interface with two different implementations but only one returned"() {
+    def "interface with two different implementations in list but only one returned"() {
         given:
         def schema = schema("""
         type Query {
             pets: [Pet]
+            cat: Cat
         }
         interface Pet {
             name: String
@@ -703,22 +704,72 @@ class BatchedExecutionStrategyTest extends Specification {
 
         def query = """
         { pets {__typename name ...on Cat { catProp } }       
+        cat {name}
         }
         """
 
 
         def dog = [__typename: "Dog", name: "Oscar"]
+        def cat = [name: "Smokey"]
 
         def pets = [dog]
 
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
 
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "pets"), { pets } as TrivialDataFetcher)
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "cat"), { cat } as TrivialDataFetcher)
+
+        AtomicInteger called = new AtomicInteger();
+        def bdf = { env ->
+            called.incrementAndGet();
+            Mono.just(new BatchedDataFetcherResult(env.sources.collect { it.name }))
+        } as BatchedDataFetcher;
+
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Cat", "name"), bdf, true)
+
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
-        result.getData() == [pets: pets]
+        called.get() == 1
+        result.getData() == [pets: pets, cat: cat]
+        result.getErrors().size() == 0
+    }
+
+    def "interface with two different implementations but only one returned"() {
+        given:
+        def schema = schema("""
+        type Query {
+            pet: Pet
+        }
+        interface Pet {
+            name: String
+       }    
+        type Dog implements Pet {
+            name: String
+        }
+        type Cat implements Pet {
+            name: String
+            catProp: String
+        }
+        """)
+
+        def query = """
+        { pet {__typename name ...on Cat { catProp } }       
+        }
+        """
+        def dog = [__typename: "Dog", name: "Oscar"]
+
+        def pet = dog
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "pet"), { pet } as TrivialDataFetcher)
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [pet: pet]
         result.getErrors().size() == 0
     }
 }

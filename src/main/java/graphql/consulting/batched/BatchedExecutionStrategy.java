@@ -208,10 +208,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             }
             GraphQLOutputType fieldType = normalizedField.getFieldDefinition().getType();
             GraphQLOutputType unwrappedType = (GraphQLOutputType) unwrapAll(fieldType);
-            // we are only concerned with list of interfaces or list of unions
-            if (!GraphQLTypeUtil.isList(fieldType)) {
-                return;
-            }
+            // we are only concerned with interfaces or unions
             if (!(unwrappedType instanceof GraphQLUnionType) && !(unwrappedType instanceof GraphQLInterfaceType)) {
                 return;
             }
