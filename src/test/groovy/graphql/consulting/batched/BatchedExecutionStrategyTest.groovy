@@ -741,6 +741,7 @@ class BatchedExecutionStrategyTest extends Specification {
         def schema = schema("""
         type Query {
             pet: Pet
+            cat: Cat
         }
         interface Pet {
             name: String
@@ -756,20 +757,37 @@ class BatchedExecutionStrategyTest extends Specification {
 
         def query = """
         { pet {__typename name ...on Cat { catProp } }       
+          cat { name }
         }
         """
         def dog = [__typename: "Dog", name: "Oscar"]
-
         def pet = dog
+
+        def cat = [name: "Smokey"]
 
         DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
 
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "pet"), { pet } as TrivialDataFetcher)
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "cat"), { cat } as TrivialDataFetcher)
+
+        AtomicInteger called = new AtomicInteger();
+        List<String> calledBatch = new CopyOnWriteArrayList<>();
+        def bdf = { env ->
+            called.incrementAndGet();
+            def batch = env.sources.collect { it.name } as List<String>
+            calledBatch.addAll(batch)
+            Mono.just(new BatchedDataFetcherResult(batch))
+        } as BatchedDataFetcher;
+
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Cat", "name"), bdf, true)
+
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))
         then:
-        result.getData() == [pet: pet]
+        result.getData() == [pet: pet, cat: cat]
         result.getErrors().size() == 0
+        called.get() == 1
+        calledBatch == ['Smokey']
     }
 }
