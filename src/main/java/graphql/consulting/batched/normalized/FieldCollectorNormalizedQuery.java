@@ -5,6 +5,7 @@ import graphql.Assert;
 import graphql.Internal;
 import graphql.execution.ConditionalNodes;
 import graphql.execution.MergedField;
+import graphql.execution.ValuesResolver;
 import graphql.introspection.Introspection;
 import graphql.language.Field;
 import graphql.language.FragmentDefinition;
@@ -44,6 +45,7 @@ import static graphql.introspection.Introspection.TypeNameMetaFieldDef;
 public class FieldCollectorNormalizedQuery {
 
     private final ConditionalNodes conditionalNodes = new ConditionalNodes();
+    private final ValuesResolver valuesResolver = new ValuesResolver();
 
     public static class CollectFieldResult {
         private final List<NormalizedField> children;
@@ -215,9 +217,11 @@ public class FieldCollectorNormalizedQuery {
                 } else {
                     fieldDefinition = assertNotNull(objectType.getFieldDefinition(field.getName()), () -> String.format("no field with name %s found in object %s", field.getName(), objectType.getName()));
                 }
+
+                Map<String, Object> argumentValues = valuesResolver.getArgumentValues(fieldDefinition.getArguments(), field.getArguments(), parameters.getVariables());
                 NormalizedField newFieldWTC = NormalizedField.newQueryExecutionField()
                         .alias(field.getAlias())
-                        .arguments(field.getArguments())
+                        .arguments(argumentValues)
                         .objectType(objectType)
                         .fieldDefinition(fieldDefinition)
                         .level(level)

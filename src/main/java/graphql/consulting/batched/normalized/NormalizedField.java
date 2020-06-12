@@ -1,14 +1,15 @@
 package graphql.consulting.batched.normalized;
 
 import graphql.Internal;
-import graphql.language.Argument;
 import graphql.schema.GraphQLFieldDefinition;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLTypeUtil;
 import graphql.schema.GraphQLUnmodifiedType;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static graphql.Assert.assertNotNull;
@@ -19,7 +20,7 @@ import static java.util.Collections.singletonList;
 public class NormalizedField {
 
     private final String alias;
-    private final List<Argument> arguments;
+    private final Map<String, Object> arguments;
     private final GraphQLObjectType objectType;
     private final GraphQLFieldDefinition fieldDefinition;
     private final List<NormalizedField> children;
@@ -77,12 +78,7 @@ public class NormalizedField {
         return alias;
     }
 
-    /**
-     * All merged fields share the same arguments.
-     *
-     * @return the list of arguments
-     */
-    public List<Argument> getArguments() {
+    public Map<String, Object> getArguments() {
         return arguments;
     }
 
@@ -168,7 +164,7 @@ public class NormalizedField {
         private int level;
         private NormalizedField parent;
         private String alias;
-        private List<Argument> arguments = new ArrayList<>();
+        private Map<String, Object> arguments = new LinkedHashMap<>();
 
         private Builder() {
 
@@ -195,7 +191,7 @@ public class NormalizedField {
             return this;
         }
 
-        public Builder arguments(List<Argument> arguments) {
+        public Builder arguments(Map<String, Object> arguments) {
             this.arguments = arguments;
             return this;
         }
