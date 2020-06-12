@@ -19,7 +19,6 @@ import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
 import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLList;
-import graphql.schema.GraphQLNonNull;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLScalarType;
@@ -56,7 +55,6 @@ import java.util.stream.Collector;
 
 import static graphql.Assert.assertNotNull;
 import static graphql.schema.FieldCoordinates.coordinates;
-import static graphql.schema.GraphQLNonNull.nonNull;
 import static graphql.schema.GraphQLTypeUtil.isList;
 import static graphql.schema.GraphQLTypeUtil.unwrapAll;
 
@@ -546,7 +544,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         boolean isNonNull = GraphQLTypeUtil.isNonNull(curType);
 
         if ((toAnalyze == NULL_VALUE || toAnalyze == null) && isNonNull) {
-            NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError((GraphQLNonNull) curType, executionPath);
+            NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError(normalizedField, executionPath);
             return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == NULL_VALUE || toAnalyze == null) {
 //            System.out.println("null value for path: " + executionPath);
@@ -600,8 +598,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 .onErrorResume(error -> error instanceof NonNullableFieldWasNullError,
                         throwable -> {
                             if (isNonNull) {
-                                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(nonNull(resolvedType), executionPath);
-                                return Mono.error(nonNullError);
+                                return Mono.error(throwable);
                             } else {
                                 tracker.addError(executionPath, (GraphQLError) throwable);
                                 return Mono.just(NULL_VALUE);
@@ -626,7 +623,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             TypeMismatchError error = new TypeMismatchError(executionPath, curType);
             tracker.addError(executionPath, error);
             if (isNonNull) {
-                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(nonNull(curType), executionPath);
+                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(normalizedField, executionPath);
                 return Mono.error(nonNullError);
             } else {
                 return Mono.just(NULL_VALUE);
@@ -659,8 +656,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
                         throwable -> {
                             if (isNonNull) {
-                                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(nonNull(currentType), executionPath);
-                                return Mono.error(nonNullError);
+                                return Mono.error(throwable);
                             } else {
                                 tracker.addError(executionPath, (GraphQLError) throwable);
                                 return Mono.just(NULL_VALUE);
@@ -691,7 +687,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             SerializationError error = new SerializationError(executionPath, e);
             tracker.addError(executionPath, error);
             if (isNonNull) {
-                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(nonNull(scalarType), executionPath);
+                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(normalizedField, executionPath);
                 return Mono.error(nonNullError);
             } else {
                 return Mono.just(NULL_VALUE);
@@ -724,7 +720,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             SerializationError error = new SerializationError(executionPath, e);
             tracker.addError(executionPath, error);
             if (isNonNull) {
-                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(nonNull(enumType), executionPath);
+                NonNullableFieldWasNullError nonNullError = new NonNullableFieldWasNullError(normalizedField, executionPath);
                 return Mono.error(nonNullError);
             } else {
                 return Mono.just(NULL_VALUE);

@@ -3,6 +3,7 @@ package graphql.consulting.batched
 import graphql.ErrorType
 import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
+import spock.lang.Ignore
 import spock.lang.Specification
 
 import java.util.concurrent.CopyOnWriteArrayList
@@ -14,6 +15,65 @@ import static graphql.consulting.batched.TestUtil.schema
 import static graphql.schema.FieldCoordinates.coordinates
 
 class BatchedExecutionStrategyTest extends Specification {
+
+
+    def "simple query"() {
+        def schema = schema("""
+        type Query {
+            foo: Foo
+        }
+        type Foo {
+            bar: String
+        }
+        """)
+
+
+        def query = """
+        {foo { bar } }
+        """
+        when:
+
+        def fooData = [bar: "na"]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "foo"), ({ fooData }) as TrivialDataFetcher)
+
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [foo: fooData]
+    }
+
+    def "non nullable error"() {
+        def schema = schema("""
+        type Query {
+            foo: Foo
+        }
+        type Foo {
+            bar: String!
+        }
+        """)
+
+
+        def query = """
+        {foo { bar } }
+        """
+        when:
+
+        def fooData = [bar: null]
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration();
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "foo"), ({ fooData }) as TrivialDataFetcher)
+
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.errors.size() == 1
+        result.errors[0].errorType == ErrorType.NullValueInNonNullableField
+        result.errors[0].message.contains("Foo.bar")
+        result.errors[0].path == ['foo', 'bar']
+        result.getData() == [foo: null]
+    }
 
     def "two level batching"() {
         def fooData = [[id: "fooId1"],
@@ -185,6 +245,8 @@ class BatchedExecutionStrategyTest extends Specification {
                                    null]]
         result.getErrors().size() == 1
         result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
+        result.getErrors().get(0).message.contains("Bar.name")
+        result.getErrors().get(0).path == ['foo', 2, 'bar', 2, 'name']
     }
 
     def "non null error bubbles up to the top"() {
@@ -220,6 +282,8 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getData() == null
         result.getErrors().size() == 1
         result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
+        result.getErrors().get(0).message.contains("Bar.name")
+        result.getErrors().get(0).path == ['foo', 1, 'bar', 1, 'name']
 
     }
 
@@ -256,6 +320,8 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getData() == [foo: null]
         result.getErrors().size() == 1
         result.getErrors().get(0).errorType == ErrorType.NullValueInNonNullableField
+        result.getErrors().get(0).message.contains("Bar.name")
+        result.getErrors().get(0).path == ['foo', 1, 'bar', 1, 'name']
 
     }
 
@@ -789,5 +855,20 @@ class BatchedExecutionStrategyTest extends Specification {
         result.getErrors().size() == 0
         called.get() == 1
         calledBatch == ['Smokey']
+    }
+
+    @Ignore
+    def "introspection query works"() {
+        given:
+        def schema = schema("""
+        type Query {
+            foo: Foo
+            cat: Cat
+        }
+        type Foo {
+            id: ID
+        }
+        """)
+
     }
 }
