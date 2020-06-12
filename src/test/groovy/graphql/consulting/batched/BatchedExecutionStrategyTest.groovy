@@ -857,6 +857,40 @@ class BatchedExecutionStrategyTest extends Specification {
         calledBatch == ['Smokey']
     }
 
+    def "batching of top level fields"() {
+        given:
+        def schema = schema("""
+        type Query {
+            echo: String
+        }
+        """)
+
+        def query = """
+        { echo echo1: echo echo2: echo  }
+        """
+
+        AtomicInteger called = new AtomicInteger()
+        List<String> calledBatch = new CopyOnWriteArrayList<>()
+        def bdf = { env ->
+            called.incrementAndGet();
+            calledBatch.addAll(env.sources)
+            Mono.just(new BatchedDataFetcherResult(['hello1', 'hello2', 'hello3']))
+        } as BatchedDataFetcher;
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Query", "echo"), bdf, true)
+
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        when:
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.getData() == [echo: 'hello1', echo1: 'hello2', echo2: 'hello3']
+        called.get() == 1
+        result.getErrors().size() == 0
+        calledBatch == [null, null, null]
+
+    }
+
     @Ignore
     def "introspection query works"() {
         given:

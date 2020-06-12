@@ -415,25 +415,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 });
     }
 
-    private void checkBatchOnCoordinates(ExecutionContext executionContext, FieldCoordinates coordinates, NormalizedQueryFromAst normalizedQueryFromAst, Tracker tracker) {
-        if (!dataFetchingConfiguration.isBatchedOnCoordinates(coordinates)) {
-            return;
-        }
-        List<OneField> oneFields;
-        List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
-        oneFields = new ArrayList<>();
-        for (NormalizedField nf : fieldsWithSameCoordinates) {
-            if (!tracker.isReadyForBatching(nf)) {
-                System.out.println("abort because " + nf + " is not ready");
-                return;
-            }
-            oneFields.addAll(tracker.getBatch(nf));
-        }
-        batchImpl(executionContext, normalizedQueryFromAst, tracker, coordinates, oneFields);
-
-
-    }
-
     private void batchFetchField(ExecutionContext executionContext,
                                  NormalizedQueryFromAst normalizedQueryFromAst,
                                  Tracker tracker,
