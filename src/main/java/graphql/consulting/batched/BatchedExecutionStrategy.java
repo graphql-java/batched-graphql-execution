@@ -1,6 +1,7 @@
 package graphql.consulting.batched;
 
 import graphql.Assert;
+import graphql.ExceptionWhileDataFetching;
 import graphql.ExecutionResult;
 import graphql.ExecutionResultImpl;
 import graphql.GraphQLError;
@@ -14,6 +15,7 @@ import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
 import graphql.execution.MergedField;
 import graphql.execution.nextgen.ExecutionStrategy;
+import graphql.language.SourceLocation;
 import graphql.schema.CoercingSerializeException;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
@@ -373,16 +375,30 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             } else if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
                 batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else {
-                trivialFetchField(tracker, oneField, normalizedField, coordinates);
+                trivialFetchField(tracker, oneField, normalizedField, normalizedQueryFromAst, coordinates);
             }
         }
 
     }
 
 
-    private void trivialFetchField(Tracker tracker, OneField oneField, NormalizedField normalizedField, FieldCoordinates coordinates) {
+    private void trivialFetchField(Tracker tracker,
+                                   OneField oneField,
+                                   NormalizedField normalizedField,
+                                   NormalizedQueryFromAst normalizedQueryFromAst,
+                                   FieldCoordinates coordinates) {
         TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
-        Object fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+        Object fetchedValue;
+        try {
+            fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+        } catch (Throwable e) {
+            MergedField mergedField = normalizedQueryFromAst.getMergedField(normalizedField);
+            SourceLocation sourceLocation = mergedField.getFields().get(0).getSourceLocation();
+            ExceptionWhileDataFetching exceptionWhileDataFetching =
+                    new ExceptionWhileDataFetching(oneField.executionPath, e, sourceLocation);
+            tracker.addError(oneField.executionPath, exceptionWhileDataFetching);
+            fetchedValue = NULL_VALUE;
+        }
         fetchedValue = replaceNullValue(fetchedValue);
         oneField.resultMono.onNext(fetchedValue);
         tracker.fetchingFinished(normalizedField, oneField.executionPath);
