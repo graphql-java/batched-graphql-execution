@@ -649,7 +649,7 @@ type Dog implements Animal{
             @Override
             TraversalControl enter(TraverserContext<NormalizedField> context) {
                 NormalizedField queryExecutionField = context.thisNode();
-                result << queryExecutionField.print()
+                result << queryExecutionField.printDetails()
                 return TraversalControl.CONTINUE;
             }
         });

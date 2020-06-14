@@ -737,4 +737,83 @@ class BatchedExecutionStrategyTest extends Specification {
 
 
     }
+
+    def "two level not batched"() {
+        def schema = schema("""
+        type Query {
+            foo: [Foo]
+        }
+        type Foo {
+            id: ID
+            bar: [Bar]
+        }
+        type Bar {
+            id: ID
+            name: String
+        }
+        """)
+
+
+        def query = """
+        {foo {
+            id
+            bar {
+                id
+                name
+            }
+        }}
+        """
+
+        def fooData = [[id: "fooId1"],
+                       [id: "fooId2"]]
+
+        def bar1 = [id: "barId1"]
+        def bar2 = [id: "barId2"]
+        def bar3 = [id: "barId3"]
+        def bar4 = [id: "barId4"]
+        def bar5 = [id: "barId5"]
+
+
+        when:
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        SingleDataFetcher barDF = { env ->
+            return Mono.fromSupplier({
+                println "CALLED WITH " + env.source
+                if (env.source.id == "fooId1") {
+                    return [bar1, bar2]
+                }
+                return [bar3, bar4, bar5]
+            });
+        } as SingleDataFetcher;
+
+        SingleDataFetcher barNameDF = { env ->
+            return Mono.fromSupplier({
+                return env.source.id + "BAR-NAME"
+            });
+        } as SingleDataFetcher;
+
+        dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "foo"), ({ fooData }) as TrivialDataFetcher)
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Foo", "bar"), barDF)
+        dataFetchingConfiguration.addSingleDataFetcher(coordinates("Bar", "name"), barNameDF)
+
+
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        def result = graphQL.execute(newExecutionInput(query))
+        then:
+        result.data == [foo: [[id: "fooId1", bar: [[id: "barId1", name: "barId1BAR-NAME"], [id: "barId2", name: "barId2BAR-NAME"]]],
+                              [id: "fooId2", bar: [[id: "barId3", name: "barId3BAR-NAME"], [id: "barId4", name: "barId4BAR-NAME"], [id: "barId5", name: "barId5BAR-NAME"]]]]]
+
+        result.extensions['batching-statistics'] == [
+                "(Query.foo)/(Foo.bar)/(Bar.id)"  : 5,
+                "(Query.foo)/(Foo.bar)/(Bar.name)": 5,
+                "(Query.foo)/(Foo.bar)"           : 2,
+                "(Query.foo)/(Foo.id)"            : 2,
+                "(Query.foo)"                     : 1
+        ]
+
+
+    }
+
 }

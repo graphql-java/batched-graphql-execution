@@ -18,7 +18,7 @@ import static java.util.Collections.singletonList;
 
 @Internal
 public class NormalizedField {
-private final String alias;
+    private final String alias;
     private final Map<String, Object> arguments;
     private final GraphQLObjectType objectType;
     private final GraphQLFieldDefinition fieldDefinition;
@@ -102,14 +102,36 @@ private final String alias;
         return objectType;
     }
 
+    public String printDetails() {
 
-    public String print() {
         StringBuilder result = new StringBuilder();
         if (getAlias() != null) {
             result.append(getAlias()).append(": ");
         }
         return result + objectType.getName() + "." + fieldDefinition.getName() + ": " + simplePrint(fieldDefinition.getType()) +
                 " (conditional: " + this.isConditional + ")";
+    }
+
+    public String print() {
+        StringBuilder result = new StringBuilder();
+        result.append("(");
+        if (getAlias() != null) {
+            result.append(getAlias()).append(":");
+        }
+        return result + objectType.getName() + "." + fieldDefinition.getName() + ")";
+    }
+
+    public String printFullPath() {
+        StringBuilder result = new StringBuilder();
+        NormalizedField cur = this;
+        while (cur != null) {
+            if (result.length() > 0) {
+                result.insert(0, "/");
+            }
+            result.insert(0, cur.print());
+            cur = cur.getParent();
+        }
+        return result.toString();
     }
 
     public List<NormalizedField> getChildren() {

@@ -42,7 +42,6 @@ import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -117,7 +116,12 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     }
 
     private Map<String, Object> createBatchingStatistics(Tracker tracker) {
-        return Collections.emptyMap();
+        Map<NormalizedField, Integer> fetchCountByNF = tracker.getFetchCountByNF();
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (NormalizedField nf : fetchCountByNF.keySet()) {
+            result.put(nf.printFullPath(), fetchCountByNF.get(nf));
+        }
+        return result;
     }
 
 

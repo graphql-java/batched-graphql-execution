@@ -30,8 +30,10 @@ public class Tracker {
     private static class NFData {
         public int isCurrentlyFetchingCount;
         public int fetchingFinishedCount;
+
         public boolean readyForBatching;
         public boolean fetchingFinished;
+
         public int nonNullChildren;
     }
 
@@ -45,8 +47,6 @@ public class Tracker {
 
     private final Scheduler scheduler;
     private int pendingAsyncDataFetcher;
-
-    private Map<NormalizedField, Integer> nfToFetchedCount = new LinkedHashMap<>();
 
     private Consumer<List<NormalizedField>> fieldsFinishedBecauseNullParents;
 
@@ -203,5 +203,13 @@ public class Tracker {
 
     public Deque<OneField> getFieldsToFetch() {
         return fieldsToFetch;
+    }
+
+    public Map<NormalizedField, Integer> getFetchCountByNF() {
+        Map<NormalizedField, Integer> result = new LinkedHashMap<>();
+        for (NormalizedField nf : nfDataMap.keySet()) {
+            result.put(nf, nfDataMap.get(nf).isCurrentlyFetchingCount);
+        }
+        return result;
     }
 }
