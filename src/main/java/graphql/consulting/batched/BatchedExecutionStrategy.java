@@ -159,10 +159,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }).subscribeOn(tracker.getScheduler());
     }
 
-    private void fieldsFinishedBecauseParentIsNull(ExecutionContext executionContext, Tracker tracker) {
-
-    }
-
     private void fetchFields(ExecutionContext executionContext,
                              NormalizedQueryFromAst normalizedQueryFromAst,
                              Tracker tracker) {
@@ -407,9 +403,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         return fetchValue(source, tracker, normalizedField, executionPath).flatMap(fetchedValue -> {
             // analysis can lead to 0-n non null values at this execution path
             // the execution path always ends with a Name
-            int curNonNullCount = tracker.getNonNullCount(normalizedField);
             return analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath).map(resolvedValue -> {
-
                 return resolvedValue;
             });
         });
