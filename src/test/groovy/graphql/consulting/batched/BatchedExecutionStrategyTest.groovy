@@ -508,8 +508,20 @@ class BatchedExecutionStrategyTest extends Specification {
             return Mono.just(new BatchedDataFetcherResult(names))
         } as BatchedDataFetcher
 
+
+        def relatedToDF = { env ->
+            return Mono.fromCallable({
+                println "RELATED TO WITH " + env.sources.size()
+                println "sleeping"
+                Thread.sleep(100)
+                return new BatchedDataFetcherResult([null, null])
+            })
+        } as BatchedDataFetcher
+
         dataFetchingConfiguration.addTrivialDataFetcher(coordinates("Query", "issues"), { issues } as TrivialDataFetcher)
         dataFetchingConfiguration.addBatchedDataFetcher(coordinates("User", "name"), nameDF, true)
+        dataFetchingConfiguration.addBatchedDataFetcher(coordinates("Issue", "relatedTo"), relatedToDF);
+
         def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
         when:
         def result = graphQL.execute(newExecutionInput(query))

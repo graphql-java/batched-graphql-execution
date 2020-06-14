@@ -27,7 +27,7 @@ public class DataFetchingConfiguration {
     }
 
     public boolean isBatchedOnCoordinates(FieldCoordinates coordinates) {
-        return batchOnCoordinates.get(coordinates);
+        return batchOnCoordinates.getOrDefault(coordinates, false);
     }
 
     public void addSingleDataFetcher(FieldCoordinates fieldCoordinates, SingleDataFetcher singleDataFetcher) {

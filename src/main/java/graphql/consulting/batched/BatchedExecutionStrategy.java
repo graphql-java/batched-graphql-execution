@@ -166,7 +166,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }
 
         public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
-//            System.out.println("add field to fetch at " + executionPath);
             OneField oneField = new OneField(executionPath, normalizedField, source);
             fieldsToFetch.add(oneField);
             oneField.resultMono = MonoProcessor.create();
@@ -185,12 +184,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
             if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.isCurrentlyFetchingCount) {
                 nfData.readyForBatching = true;
-                System.out.println("NF " + normalizedField + " is finished");
             }
         }
 
         public void fetchingFinished(NormalizedField normalizedField, ExecutionPath executionPath) {
-            System.out.println("Fetching finished at " + executionPath);
             NFData nfData = nfDataMap.get(normalizedField);
             nfData.fetchingFinishedCount++;
             NormalizedField parent = normalizedField.getParent();
@@ -204,7 +201,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.fetchingFinishedCount) {
                 nfData.fetchingFinished = true;
                 // this means no children will be fetched => mark all children as done
-                System.out.println("NF " + normalizedField + " is finished");
                 markNonFetchableChildrenAsDone(normalizedField, nfData);
             }
         }
@@ -231,7 +227,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }
 
         private void markAllChildrenAsDone(NormalizedField normalizedField, boolean includingItself) {
-            System.out.println("mark all children as done for " + normalizedField);
             List<NormalizedField> list = new ArrayList<>();
             if (includingItself) {
                 NFData nfData = new NFData();
@@ -363,18 +358,17 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 System.out.println("PARENT SET TO NULL " + doneFields);
                 for (NormalizedField doneField : doneFields) {
                     FieldCoordinates coordinates = coordinates(doneField.getObjectType(), doneField.getFieldDefinition());
+                    checkBatchOnCoordinates(executionContext, coordinates, normalizedQueryFromAst, tracker);
                 }
             });
         }
 
         if (tracker.fieldsToFetch.size() == 0 && tracker.getPendingAsyncDataFetcher() == 0) {
-            System.out.println("END!!!!");
             // this means we are at the end
         }
         while (!tracker.fieldsToFetch.isEmpty()) {
             OneField oneField = tracker.fieldsToFetch.poll();
             NormalizedField normalizedField = oneField.normalizedField;
-            System.out.println("fetching field at " + oneField.executionPath);
             tracker.fetchingStarted(normalizedField);
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
@@ -505,6 +499,28 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     tracker.fetchingFinished(normalizedField, oneField.executionPath);
                     fetchFields(executionContext, normalizedQueryFromAst, tracker);
                 });
+    }
+
+    private void checkBatchOnCoordinates(ExecutionContext executionContext, FieldCoordinates coordinates, NormalizedQueryFromAst normalizedQueryFromAst, Tracker tracker) {
+        if (!dataFetchingConfiguration.isBatchedOnCoordinates(coordinates)) {
+            return;
+        }
+        List<OneField> oneFields;
+        List<NormalizedField> fieldsWithSameCoordinates = normalizedQueryFromAst.getCoordinatesToNormalizedFields().get(coordinates);
+        oneFields = new ArrayList<>();
+        for (NormalizedField nf : fieldsWithSameCoordinates) {
+            if (!tracker.isReadyForBatching(nf)) {
+                System.out.println("abort because " + nf + " is not ready");
+                return;
+            }
+            List<OneField> batch = tracker.getBatch(nf);
+            // batch can be null for NormalizedFields which are never fetched
+            if (batch != null) {
+                oneFields.addAll(batch);
+            }
+        }
+        batchImpl(executionContext, normalizedQueryFromAst, tracker, coordinates, oneFields);
+
     }
 
     private void batchFetchField(ExecutionContext executionContext,
