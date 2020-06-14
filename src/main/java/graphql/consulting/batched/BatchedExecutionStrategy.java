@@ -24,49 +24,40 @@ import graphql.schema.DataFetchingEnvironmentImpl;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
 import graphql.schema.GraphQLFieldDefinition;
-import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLList;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLType;
 import graphql.schema.GraphQLTypeUtil;
-import graphql.schema.GraphQLUnionType;
 import graphql.schema.PropertyDataFetcher;
 import graphql.util.FpKit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoProcessor;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 import java.util.function.BinaryOperator;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
 
-import static graphql.Assert.assertNotNull;
 import static graphql.schema.DataFetchingEnvironmentImpl.newDataFetchingEnvironment;
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.FieldCoordinates.systemCoordinates;
 import static graphql.schema.GraphQLTypeUtil.isList;
-import static graphql.schema.GraphQLTypeUtil.unwrapAll;
 
 public class BatchedExecutionStrategy implements ExecutionStrategy {
     private static final Logger log = LoggerFactory.getLogger(BatchedExecutionStrategy.class);
@@ -93,193 +84,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         }
     }
 
-    private static class OneField {
-        ExecutionPath executionPath;
-        NormalizedField normalizedField;
-        Object source;
-        MonoProcessor<Object> resultMono;
-//        Mono<Object> listener;
-
-        public OneField(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
-            this.executionPath = executionPath;
-            this.normalizedField = normalizedField;
-            this.source = source;
-        }
-
-        @Override
-        public String toString() {
-            return "OneField{" +
-                    "executionPath=" + executionPath +
-                    '}';
-        }
-    }
-
-    private static class NFData {
-        public int isCurrentlyFetchingCount;
-        public int fetchingFinishedCount;
-        public boolean readyForBatching;
-        public boolean fetchingFinished;
-        public int nonNullChildren;
-    }
-
-    private static class Tracker {
-        private final Deque<OneField> fieldsToFetch = new LinkedList<>();
-
-        private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
-        private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
-
-        private final Map<NormalizedField, NFData> nfDataMap = new LinkedHashMap<>();
-        private final Map<NormalizedField, Set<GraphQLObjectType>> childTypesMap = new LinkedHashMap<>();
-
-        private final Scheduler scheduler;
-        private int pendingAsyncDataFetcher;
-
-        private Consumer<List<NormalizedField>> fieldsFinishedBecauseNullParents;
-
-        private Tracker(Scheduler scheduler) {
-            this.scheduler = scheduler;
-        }
-
-        public void setFieldsFinishedBecauseNullParents(Consumer<List<NormalizedField>> fieldsFinishedBecauseNullParents) {
-            Assert.assertNull(this.fieldsFinishedBecauseNullParents);
-            this.fieldsFinishedBecauseNullParents = fieldsFinishedBecauseNullParents;
-        }
-
-        public int getPendingAsyncDataFetcher() {
-            return pendingAsyncDataFetcher;
-        }
-
-        public void decrementPendingAsyncDataFetcher() {
-            pendingAsyncDataFetcher--;
-        }
-
-        public void incrementPendingAsyncDataFetcher() {
-            pendingAsyncDataFetcher++;
-        }
-
-        public void addError(ExecutionPath executionPath, GraphQLError error) {
-            errors.put(executionPath, error);
-        }
-
-        public Map<ExecutionPath, GraphQLError> getErrors() {
-            return errors;
-        }
-
-        public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
-            OneField oneField = new OneField(executionPath, normalizedField, source);
-            fieldsToFetch.add(oneField);
-            oneField.resultMono = MonoProcessor.create();
-            return oneField.resultMono.cache().doOnSubscribe(subscription -> {
-            });
-        }
-
-        public void fetchingStarted(NormalizedField normalizedField) {
-            NFData nfData = nfDataMap.computeIfAbsent(normalizedField, k -> new NFData());
-            nfData.isCurrentlyFetchingCount++;
-            NormalizedField parent = normalizedField.getParent();
-            if (parent == null) {
-                nfData.readyForBatching = true;
-                return;
-            }
-            NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
-            if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.isCurrentlyFetchingCount) {
-                nfData.readyForBatching = true;
-            }
-        }
-
-        public void fetchingFinished(NormalizedField normalizedField, ExecutionPath executionPath) {
-            NFData nfData = nfDataMap.get(normalizedField);
-            nfData.fetchingFinishedCount++;
-            NormalizedField parent = normalizedField.getParent();
-            if (parent == null) {
-                // top level fields are always finished
-                nfData.fetchingFinished = true;
-                markNonFetchableChildrenAsDone(normalizedField, nfData);
-                return;
-            }
-            NFData nfDataParent = assertNotNull(nfDataMap.get(parent));
-            if (nfDataParent.fetchingFinished && nfDataParent.nonNullChildren == nfData.fetchingFinishedCount) {
-                nfData.fetchingFinished = true;
-                // this means no children will be fetched => mark all children as done
-                markNonFetchableChildrenAsDone(normalizedField, nfData);
-            }
-        }
-
-        private void markNonFetchableChildrenAsDone(NormalizedField normalizedField, NFData nfData) {
-            if (nfData.nonNullChildren == 0) {
-                markAllChildrenAsDone(normalizedField, false);
-                return;
-            }
-            GraphQLOutputType fieldType = normalizedField.getFieldDefinition().getType();
-            GraphQLOutputType unwrappedType = (GraphQLOutputType) unwrapAll(fieldType);
-            // we are only concerned with interfaces or unions
-            if (!(unwrappedType instanceof GraphQLUnionType) && !(unwrappedType instanceof GraphQLInterfaceType)) {
-                return;
-            }
-            Set<GraphQLObjectType> childTypes = childTypesMap.get(normalizedField);
-            for (NormalizedField child : normalizedField.getChildren()) {
-                if (childTypes.contains(child.getObjectType())) {
-                    continue;
-                }
-                markAllChildrenAsDone(child, true);
-            }
-
-        }
-
-        private void markAllChildrenAsDone(NormalizedField normalizedField, boolean includingItself) {
-            List<NormalizedField> list = new ArrayList<>();
-            if (includingItself) {
-                NFData nfData = new NFData();
-                nfData.readyForBatching = true;
-                nfData.fetchingFinished = true;
-                nfDataMap.put(normalizedField, nfData);
-                list.add(normalizedField);
-            }
-            normalizedField.traverseSubTree(child -> {
-                list.add(child);
-                NFData nfData = new NFData();
-                nfData.readyForBatching = true;
-                nfData.fetchingFinished = true;
-                nfDataMap.put(child, nfData);
-            });
-            if (list.size() > 0) {
-                this.fieldsFinishedBecauseNullParents.accept(list);
-            }
-        }
-
-        public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
-            nfDataMap.computeIfAbsent(normalizedField, k -> new NFData()).nonNullChildren++;
-        }
-
-        public int getNonNullCount(NormalizedField normalizedField) {
-            return nfDataMap.computeIfAbsent(normalizedField, k -> new NFData()).nonNullChildren;
-        }
-
-        public boolean isNormalizedFieldFinishedFetching(NormalizedField normalizedField) {
-            return nfDataMap.containsKey(normalizedField) && nfDataMap.get(normalizedField).fetchingFinished;
-        }
-
-        public boolean isReadyForBatching(NormalizedField normalizedField) {
-            return nfDataMap.containsKey(normalizedField) && nfDataMap.get(normalizedField).readyForBatching;
-        }
-
-        public void addBatch(NormalizedField normalizedField, OneField oneField) {
-            batch.computeIfAbsent(normalizedField, ignored -> new ArrayList<>()).add(oneField);
-        }
-
-        public List<OneField> getBatch(NormalizedField normalizedField) {
-            return batch.get(normalizedField);
-        }
-
-        public Map<NormalizedField, List<OneField>> getBatches() {
-            return batch;
-        }
-
-        public void addChildType(NormalizedField normalizedField, GraphQLObjectType resolvedObjectType) {
-            childTypesMap.computeIfAbsent(normalizedField, k -> new LinkedHashSet<>()).add(resolvedObjectType);
-        }
-    }
-
 
     @Override
     public CompletableFuture<ExecutionResult> execute(ExecutionContext executionContext) {
@@ -301,6 +105,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     return ExecutionResultImpl.newExecutionResult()
                             .addErrors(new ArrayList<>(value.getT2().getErrors().values()))
                             .data(value.getT1())
+                            .addExtension("batching-statistics", createBatchingStatistics(value.getT2()))
                             .build();
                 })
                 .onErrorResume(NonNullableFieldWasNullError.class::isInstance,
@@ -309,6 +114,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                 .build()))
                 .cast(ExecutionResult.class)
                 .toFuture();
+    }
+
+    private Map<String, Object> createBatchingStatistics(Tracker tracker) {
+        return Collections.emptyMap();
     }
 
 
@@ -343,7 +152,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             Flux<Tuple2<String, Object>> flux = Flux.mergeSequential(monoChildren);
             Mono<Map<String, Object>> resultMapMono = flux.collect(mapCollector());
             return resultMapMono.zipWith(Mono.just(tracker));
-        }).subscribeOn(tracker.scheduler);
+        }).subscribeOn(tracker.getScheduler());
     }
 
     private void fieldsFinishedBecauseParentIsNull(ExecutionContext executionContext, Tracker tracker) {
@@ -353,7 +162,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     private void fetchFields(ExecutionContext executionContext,
                              NormalizedQueryFromAst normalizedQueryFromAst,
                              Tracker tracker) {
-        if (tracker.fieldsFinishedBecauseNullParents == null) {
+        if (tracker.getFieldsFinishedBecauseNullParents() == null) {
             tracker.setFieldsFinishedBecauseNullParents((doneFields) -> {
                 for (NormalizedField doneField : doneFields) {
                     FieldCoordinates coordinates = coordinates(doneField.getObjectType(), doneField.getFieldDefinition());
@@ -362,11 +171,11 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             });
         }
 
-        if (tracker.fieldsToFetch.size() == 0 && tracker.getPendingAsyncDataFetcher() == 0) {
+        if (tracker.getFieldsToFetch().size() == 0 && tracker.getPendingAsyncDataFetcher() == 0) {
             // this means we are at the end
         }
-        while (!tracker.fieldsToFetch.isEmpty()) {
-            OneField oneField = tracker.fieldsToFetch.poll();
+        while (!tracker.getFieldsToFetch().isEmpty()) {
+            OneField oneField = tracker.getFieldsToFetch().poll();
             NormalizedField normalizedField = oneField.normalizedField;
             tracker.fetchingStarted(normalizedField);
 
@@ -490,7 +299,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         singleDataFetcher
                 .get(singleDataFetcherEnvironment)
                 .publishOn(fetchingScheduler)
-                .publishOn(tracker.scheduler)
+                .publishOn(tracker.getScheduler())
                 .subscribe(fetchedValue -> {
                     tracker.decrementPendingAsyncDataFetcher();
                     fetchedValue = replaceNullValue(fetchedValue);
@@ -569,7 +378,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         tracker.incrementPendingAsyncDataFetcher();
         batchedDataFetcherResultMono
                 .publishOn(fetchingScheduler)
-                .publishOn(tracker.scheduler)
+                .publishOn(tracker.getScheduler())
                 .subscribe(batchedDataFetcherResult -> {
                     tracker.decrementPendingAsyncDataFetcher();
                     for (int i = 0; i < batchedDataFetcherResult.getValues().size(); i++) {
