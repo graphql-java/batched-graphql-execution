@@ -501,7 +501,7 @@ class BatchedExecutionStrategyTest extends Specification {
         AtomicInteger invokedCount = new AtomicInteger()
         List<List<String>> nameBatches = new CopyOnWriteArrayList<>();
         def nameDF = { env ->
-            println "batched df with sources " + env.sources
+            println "batched df names with sources " + env.sources
             invokedCount.getAndIncrement();
             def names = env.sources.collect({ it.name })
             nameBatches.add(names)

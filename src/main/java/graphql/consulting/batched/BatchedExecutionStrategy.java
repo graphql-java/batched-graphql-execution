@@ -355,7 +355,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                              Tracker tracker) {
         if (tracker.fieldsFinishedBecauseNullParents == null) {
             tracker.setFieldsFinishedBecauseNullParents((doneFields) -> {
-                System.out.println("PARENT SET TO NULL " + doneFields);
                 for (NormalizedField doneField : doneFields) {
                     FieldCoordinates coordinates = coordinates(doneField.getObjectType(), doneField.getFieldDefinition());
                     checkBatchOnCoordinates(executionContext, coordinates, normalizedQueryFromAst, tracker);
@@ -510,7 +509,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         oneFields = new ArrayList<>();
         for (NormalizedField nf : fieldsWithSameCoordinates) {
             if (!tracker.isReadyForBatching(nf)) {
-                System.out.println("abort because " + nf + " is not ready");
                 return;
             }
             List<OneField> batch = tracker.getBatch(nf);
@@ -538,7 +536,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             oneFields = new ArrayList<>();
             for (NormalizedField nf : fieldsWithSameCoordinates) {
                 if (!tracker.isReadyForBatching(nf)) {
-                    System.out.println("abort because " + nf + " is not ready");
                     return;
                 }
                 List<OneField> batch = tracker.getBatch(nf);
@@ -597,7 +594,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         return fetchValue(source, tracker, normalizedField, executionPath).flatMap(fetchedValue -> {
             // analysis can lead to 0-n non null values at this execution path
             // the execution path always ends with a Name
-            System.out.println("start analysis at " + executionPath + " for " + normalizedField);
             int curNonNullCount = tracker.getNonNullCount(normalizedField);
             return analyseValue(context, tracker, fetchedValue, normalizedField, normalizedQueryFromAst, executionPath).map(resolvedValue -> {
 
@@ -636,7 +632,6 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             NonNullableFieldWasNullError nonNullableFieldWasNullError = new NonNullableFieldWasNullError(normalizedField, executionPath);
             return Mono.error(nonNullableFieldWasNullError);
         } else if (toAnalyze == NULL_VALUE || toAnalyze == null) {
-//            System.out.println("null value for path: " + executionPath);
             return Mono.just(NULL_VALUE);
         }
 
