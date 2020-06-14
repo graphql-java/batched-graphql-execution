@@ -32,6 +32,7 @@ import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLType;
 import graphql.schema.GraphQLTypeUtil;
 import graphql.schema.GraphQLUnionType;
+import graphql.schema.PropertyDataFetcher;
 import graphql.util.FpKit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +62,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collector;
 
 import static graphql.Assert.assertNotNull;
+import static graphql.schema.DataFetchingEnvironmentImpl.newDataFetchingEnvironment;
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.FieldCoordinates.systemCoordinates;
 import static graphql.schema.GraphQLTypeUtil.isList;
@@ -382,8 +384,10 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 singleFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
                 batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
-            } else {
+            } else if (dataFetchingConfiguration.getTrivialDataFetcher(coordinates) != null) {
                 trivialFetchField(tracker, oneField, normalizedField, normalizedQueryFromAst, coordinates);
+            } else {
+                propertyBasedFetcher(executionContext, tracker, oneField, normalizedField, normalizedQueryFromAst, coordinates);
             }
         }
 
@@ -437,9 +441,31 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                    NormalizedQueryFromAst normalizedQueryFromAst,
                                    FieldCoordinates coordinates) {
         TrivialDataFetcher trivialDataFetcher = this.dataFetchingConfiguration.getTrivialDataFetcher(coordinates);
+        Supplier<Object> supplier = () -> trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+        syncFetchFieldImpl(tracker, oneField, normalizedField, normalizedQueryFromAst, supplier);
+    }
+
+    private void propertyBasedFetcher(ExecutionContext executionContext,
+                                      Tracker tracker,
+                                      OneField oneField,
+                                      NormalizedField normalizedField,
+                                      NormalizedQueryFromAst normalizedQueryFromAst,
+                                      FieldCoordinates coordinates) {
+        DataFetchingEnvironment dfEnvironment = createDFEnvironment(executionContext, oneField.source, normalizedField, normalizedQueryFromAst);
+        PropertyDataFetcher<Object> fetching = PropertyDataFetcher.fetching(normalizedField.getResultKey());
+        Supplier<Object> supplier = () -> fetching.get(dfEnvironment);
+        syncFetchFieldImpl(tracker, oneField, normalizedField, normalizedQueryFromAst, supplier);
+    }
+
+    private void syncFetchFieldImpl(Tracker tracker,
+                                    OneField oneField,
+                                    NormalizedField normalizedField,
+                                    NormalizedQueryFromAst normalizedQueryFromAst,
+                                    Supplier<Object> actualCall
+    ) {
         Object fetchedValue;
         try {
-            fetchedValue = trivialDataFetcher.get(new TrivialDataFetcherEnvironment(normalizedField, oneField.source));
+            fetchedValue = actualCall.get();
         } catch (Throwable e) {
             MergedField mergedField = normalizedQueryFromAst.getMergedField(normalizedField);
             SourceLocation sourceLocation = mergedField.getFields().get(0).getSourceLocation();
@@ -451,6 +477,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
         fetchedValue = replaceNullValue(fetchedValue);
         oneField.resultMono.onNext(fetchedValue);
         tracker.fetchingFinished(normalizedField, oneField.executionPath);
+
     }
 
     private Object replaceNullValue(Object fetchedValue) {
@@ -801,6 +828,22 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                     return left;
                 });
         return result;
+    }
+
+    private DataFetchingEnvironment createDFEnvironment(ExecutionContext executionContext,
+                                                        Object source,
+                                                        NormalizedField normalizedField,
+                                                        NormalizedQueryFromAst normalizedQueryFromAst) {
+        DataFetchingEnvironment environment = newDataFetchingEnvironment(executionContext)
+                .source(source)
+                .arguments(normalizedField.getArguments())
+                .fieldDefinition(normalizedField.getFieldDefinition())
+                .mergedField(normalizedQueryFromAst.getMergedField(normalizedField))
+                .fieldType(normalizedField.getFieldDefinition().getType())
+//                .executionStepInfo(executionStepInfo)
+                .parentType(normalizedField.getObjectType())
+                .build();
+        return environment;
     }
 
 

@@ -51,9 +51,6 @@ public class DataFetchingConfiguration {
     }
 
     public TrivialDataFetcher getTrivialDataFetcher(FieldCoordinates fieldCoordinates) {
-        if (trivialDataFetcherMap.containsKey(fieldCoordinates)) {
-            return trivialDataFetcherMap.get(fieldCoordinates);
-        }
-        return new DefaultTrivialDataFetcher();
+        return trivialDataFetcherMap.get(fieldCoordinates);
     }
 }
