@@ -18,8 +18,7 @@ import static java.util.Collections.singletonList;
 
 @Internal
 public class NormalizedField {
-
-    private final String alias;
+private final String alias;
     private final Map<String, Object> arguments;
     private final GraphQLObjectType objectType;
     private final GraphQLFieldDefinition fieldDefinition;
@@ -131,6 +130,10 @@ public class NormalizedField {
 
     public List<String> getPath() {
         return path;
+    }
+
+    public boolean isIntrospectionField() {
+        return getFieldDefinition().getName().startsWith("__") || getObjectType().getName().startsWith("__");
     }
 
     @Override

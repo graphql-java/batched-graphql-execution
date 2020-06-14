@@ -1,9 +1,9 @@
 package graphql.consulting.batched
 
-import graphql.ErrorType
+
+import graphql.introspection.IntrospectionQuery
 import graphql.nextgen.GraphQL
 import reactor.core.publisher.Mono
-import spock.lang.Ignore
 import spock.lang.Specification
 
 import java.util.concurrent.CopyOnWriteArrayList
@@ -701,18 +701,28 @@ class BatchedExecutionStrategyTest extends Specification {
 
     }
 
-    @Ignore
     def "introspection query works"() {
         given:
         def schema = schema("""
         type Query {
             foo: Foo
-            cat: Cat
         }
         type Foo {
             id: ID
         }
         """)
+
+        DataFetchingConfiguration dataFetchingConfiguration = new DataFetchingConfiguration()
+
+        def graphQL = GraphQL.newGraphQL(schema).executionStrategy(new BatchedExecutionStrategy(dataFetchingConfiguration)).build()
+        def graphQL2 = graphql.GraphQL.newGraphQL(schema).build();
+        when:
+        def result = graphQL.execute(newExecutionInput(IntrospectionQuery.INTROSPECTION_QUERY))
+        def result2 = graphQL2.execute(newExecutionInput(IntrospectionQuery.INTROSPECTION_QUERY))
+        then:
+        result.getErrors().size() == 0
+        result.getData() == result2.getData()
+
 
     }
 }

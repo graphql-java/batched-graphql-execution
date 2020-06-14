@@ -145,6 +145,8 @@ public class Test {
             System.out.println("value: " + s);
         });
 
+        int[] x = new int[]{1, 2, 3, 4, 5};
+//        System.out.println(" " + (x instanceof Iterable));
 
     }
 

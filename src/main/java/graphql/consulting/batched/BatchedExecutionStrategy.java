@@ -15,10 +15,15 @@ import graphql.execution.ExecutionContext;
 import graphql.execution.ExecutionPath;
 import graphql.execution.MergedField;
 import graphql.execution.nextgen.ExecutionStrategy;
+import graphql.introspection.Introspection;
 import graphql.language.SourceLocation;
 import graphql.schema.CoercingSerializeException;
+import graphql.schema.DataFetcher;
+import graphql.schema.DataFetchingEnvironment;
+import graphql.schema.DataFetchingEnvironmentImpl;
 import graphql.schema.FieldCoordinates;
 import graphql.schema.GraphQLEnumType;
+import graphql.schema.GraphQLFieldDefinition;
 import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLList;
 import graphql.schema.GraphQLObjectType;
@@ -57,6 +62,7 @@ import java.util.stream.Collector;
 
 import static graphql.Assert.assertNotNull;
 import static graphql.schema.FieldCoordinates.coordinates;
+import static graphql.schema.FieldCoordinates.systemCoordinates;
 import static graphql.schema.GraphQLTypeUtil.isList;
 import static graphql.schema.GraphQLTypeUtil.unwrapAll;
 
@@ -370,7 +376,9 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             tracker.fetchingStarted(normalizedField);
 
             FieldCoordinates coordinates = coordinates(normalizedField.getObjectType(), normalizedField.getFieldDefinition());
-            if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
+            if (normalizedField.isIntrospectionField()) {
+                fetchIntrospectionField(executionContext, tracker, oneField, normalizedField, normalizedQueryFromAst, coordinates);
+            } else if (dataFetchingConfiguration.isSingleFetch(coordinates)) {
                 singleFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
             } else if (dataFetchingConfiguration.isFieldBatched(coordinates)) {
                 batchFetchField(executionContext, normalizedQueryFromAst, tracker, oneField, normalizedField, coordinates);
@@ -379,6 +387,47 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
             }
         }
 
+    }
+
+    private boolean isSpecialIntrospectionField(GraphQLFieldDefinition fieldDefinition) {
+        return fieldDefinition == Introspection.TypeMetaFieldDef ||
+                fieldDefinition == Introspection.SchemaMetaFieldDef ||
+                fieldDefinition == Introspection.TypeNameMetaFieldDef;
+    }
+
+    private void fetchIntrospectionField(ExecutionContext executionContext,
+                                         Tracker tracker,
+                                         OneField oneField,
+                                         NormalizedField normalizedField,
+                                         NormalizedQueryFromAst normalizedQueryFromAst,
+                                         FieldCoordinates coordinates) {
+        GraphQLFieldDefinition fieldDefinition = normalizedField.getFieldDefinition();
+        String name = fieldDefinition.getName();
+        DataFetcher<?> dataFetcher;
+        if (isSpecialIntrospectionField(fieldDefinition)) {
+            dataFetcher = executionContext.getGraphQLSchema().getCodeRegistry().getDataFetcher(systemCoordinates(name), normalizedField.getFieldDefinition());
+        } else {
+            dataFetcher = executionContext.getGraphQLSchema().getCodeRegistry().getDataFetcher(coordinates, normalizedField.getFieldDefinition());
+        }
+        DataFetchingEnvironment env = DataFetchingEnvironmentImpl.newDataFetchingEnvironment()
+                .source(oneField.source)
+                .graphQLSchema(executionContext.getGraphQLSchema())
+                .arguments(oneField.normalizedField.getArguments())
+                .variables(executionContext.getVariables())
+                .fieldType(oneField.normalizedField.getFieldDefinition().getType())
+                .parentType(oneField.normalizedField.getObjectType())
+                .build();
+        Object fetchedValue = callIntrospectionDataFetcher(dataFetcher, env);
+        oneField.resultMono.onNext(replaceNullValue(fetchedValue));
+        tracker.fetchingFinished(normalizedField, oneField.executionPath);
+    }
+
+    private Object callIntrospectionDataFetcher(DataFetcher<?> dataFetcher, DataFetchingEnvironment env) {
+        try {
+            return dataFetcher.get(env);
+        } catch (Exception e) {
+            return Assert.assertShouldNeverHappen("exception thrown by inspection function %s", e);
+        }
     }
 
 
@@ -614,8 +663,8 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                      NormalizedQueryFromAst normalizedQueryFromAst,
                                      ExecutionPath executionPath) {
 
-        if (toAnalyze instanceof List) {
-            return createListImpl(executionContext, tracker, toAnalyze, (List<Object>) toAnalyze, curType, isNonNull, normalizedField, normalizedQueryFromAst, executionPath);
+        if (toAnalyze instanceof Iterable) {
+            return createListImpl(executionContext, tracker, toAnalyze, (Iterable<Object>) toAnalyze, curType, isNonNull, normalizedField, normalizedQueryFromAst, executionPath);
         } else {
             TypeMismatchError error = new TypeMismatchError(executionPath, curType);
             tracker.addError(executionPath, error);
@@ -632,7 +681,7 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
     private Mono<Object> createListImpl(ExecutionContext executionContext,
                                         Tracker tracker,
                                         Object fetchedValue,
-                                        List<Object> iterableValues,
+                                        Iterable<Object> iterableValues,
                                         GraphQLList currentType,
                                         boolean isNonNull,
                                         NormalizedField normalizedField,
