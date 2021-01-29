@@ -30,7 +30,7 @@ import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLType;
 import graphql.schema.GraphQLTypeUtil;
-import graphql.schema.PropertyDataFetcher;
+import graphql.schema.PropertyFetchingImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
@@ -53,7 +53,6 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
 
-import static graphql.schema.DataFetchingEnvironmentImpl.newDataFetchingEnvironment;
 import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.FieldCoordinates.systemCoordinates;
 import static graphql.schema.GraphQLTypeUtil.isList;
@@ -253,9 +252,14 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                                       NormalizedField normalizedField,
                                       NormalizedQueryFromAst normalizedQueryFromAst,
                                       FieldCoordinates coordinates) {
-        DataFetchingEnvironment dfEnvironment = createDFEnvironment(executionContext, oneField.source, normalizedField, normalizedQueryFromAst);
-        PropertyDataFetcher<Object> fetching = PropertyDataFetcher.fetching(normalizedField.getResultKey());
-        Supplier<Object> supplier = () -> fetching.get(dfEnvironment);
+        PropertyFetchingImpl propertyFetching = new PropertyFetchingImpl(BatchedDataFetcherEnvironment.class);
+
+        Supplier<Object> supplier = () -> {
+            if (oneField.source == null) {
+                return null;
+            }
+            return propertyFetching.getPropertyValue(oneField.normalizedField.getName(), oneField.source, oneField.normalizedField.getFieldDefinition().getType());
+        };
         syncFetchFieldImpl(tracker, oneField, normalizedField, normalizedQueryFromAst, supplier);
     }
 
@@ -647,23 +651,5 @@ public class BatchedExecutionStrategy implements ExecutionStrategy {
                 });
         return result;
     }
-
-
-    private DataFetchingEnvironment createDFEnvironment(ExecutionContext executionContext,
-                                                        Object source,
-                                                        NormalizedField normalizedField,
-                                                        NormalizedQueryFromAst normalizedQueryFromAst) {
-        DataFetchingEnvironment environment = newDataFetchingEnvironment(executionContext)
-                .source(source)
-                .arguments(normalizedField.getArguments())
-                .fieldDefinition(normalizedField.getFieldDefinition())
-                .mergedField(normalizedQueryFromAst.getMergedField(normalizedField))
-                .fieldType(normalizedField.getFieldDefinition().getType())
-//                .executionStepInfo(executionStepInfo)
-                .parentType(normalizedField.getObjectType())
-                .build();
-        return environment;
-    }
-
 
 }
