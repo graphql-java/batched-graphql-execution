@@ -1,10 +1,12 @@
 package graphql.consulting.batched;
 
+import graphql.PublicApi;
 import graphql.consulting.batched.normalized.NormalizedField;
 import graphql.execution.ResultPath;
 
 import java.util.List;
 
+@PublicApi
 public class BatchedDataFetcherEnvironment {
     private List<Object> sources;
     private List<NormalizedField> normalizedFields;

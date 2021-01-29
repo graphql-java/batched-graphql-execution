@@ -1,9 +1,15 @@
 # Batched GraphQL execution
 
+## Note: This is not an open source project. It is not licensed under an open source compatible license at this moment. 
+
+
 This is a custom execution engine for [GraphQL Java](https://github.com/graphql-java/graphql-java/) which is optimized for
 batching to avoid the N+1 problem.
 
+This is an alternative approach to using [batched data loading](https://www.graphql-java.com/documentation/v16/batching/)
+
 It is fully reactive using [Reactor](https://projectreactor.io/).
+
 
 ## Overview
 
