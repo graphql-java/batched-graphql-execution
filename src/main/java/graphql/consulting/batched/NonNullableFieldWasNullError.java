@@ -5,7 +5,7 @@ import graphql.GraphQLError;
 import graphql.GraphqlErrorHelper;
 import graphql.PublicApi;
 import graphql.consulting.batched.normalized.NormalizedField;
-import graphql.execution.ExecutionPath;
+import graphql.execution.ResultPath;
 import graphql.language.SourceLocation;
 
 import java.util.List;
@@ -19,9 +19,9 @@ public class NonNullableFieldWasNullError extends RuntimeException implements Gr
     private final String message;
     private final List<Object> path;
 
-    public NonNullableFieldWasNullError(NormalizedField normalizedField, ExecutionPath executionPath) {
+    public NonNullableFieldWasNullError(NormalizedField normalizedField, ResultPath resultPath) {
 
-        this.path = executionPath.toList();
+        this.path = resultPath.toList();
         this.message = String.format("Cannot return null for non-nullable field: '%s.%s' (%s)",
                 normalizedField.getObjectType().getName(), normalizedField.getFieldDefinition().getName(), path);
     }

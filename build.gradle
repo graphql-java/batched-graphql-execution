@@ -30,7 +30,7 @@ def getDevelopmentVersion() {
 
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
-def graphQLJavaVersion = '2020-06-05T10-44-09-eff6106'
+def graphQLJavaVersion = '2021-01-27T06-23-16-986ee60'
 def slf4jVersion = '1.7.25'
 def releaseVersion = System.env.RELEASE_VERSION
 version = releaseVersion ? releaseVersion : getDevelopmentVersion()
@@ -58,6 +58,8 @@ dependencies {
     api('com.graphql-java:graphql-java:' + graphQLJavaVersion)
     api 'io.projectreactor:reactor-core'
     api 'io.projectreactor:reactor-tools'
+    implementation 'org.slf4j:slf4j-api:' + slf4jVersion
+
 
     testImplementation group: 'junit', name: 'junit', version: '4.12'
     testImplementation 'org.spockframework:spock-core:1.3-groovy-2.5'

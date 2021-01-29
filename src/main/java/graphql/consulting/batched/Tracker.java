@@ -3,7 +3,7 @@ package graphql.consulting.batched;
 import graphql.Assert;
 import graphql.GraphQLError;
 import graphql.consulting.batched.normalized.NormalizedField;
-import graphql.execution.ExecutionPath;
+import graphql.execution.ResultPath;
 import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLOutputType;
@@ -40,7 +40,7 @@ public class Tracker {
     private final Deque<OneField> fieldsToFetch = new LinkedList<>();
 
     private final Map<NormalizedField, List<OneField>> batch = new LinkedHashMap<>();
-    private final Map<ExecutionPath, GraphQLError> errors = new LinkedHashMap<>();
+    private final Map<ResultPath, GraphQLError> errors = new LinkedHashMap<>();
 
     private final Map<NormalizedField, NFData> nfDataMap = new LinkedHashMap<>();
     private final Map<NormalizedField, Set<GraphQLObjectType>> childTypesMap = new LinkedHashMap<>();
@@ -71,16 +71,16 @@ public class Tracker {
         pendingAsyncDataFetcher++;
     }
 
-    public void addError(ExecutionPath executionPath, GraphQLError error) {
-        errors.put(executionPath, error);
+    public void addError(ResultPath resultPath, GraphQLError error) {
+        errors.put(resultPath, error);
     }
 
-    public Map<ExecutionPath, GraphQLError> getErrors() {
+    public Map<ResultPath, GraphQLError> getErrors() {
         return errors;
     }
 
-    public Mono<Object> addFieldToFetch(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
-        OneField oneField = new OneField(executionPath, normalizedField, source);
+    public Mono<Object> addFieldToFetch(ResultPath resultPath, NormalizedField normalizedField, Object source) {
+        OneField oneField = new OneField(resultPath, normalizedField, source);
         fieldsToFetch.add(oneField);
         oneField.resultMono = MonoProcessor.create();
         return oneField.resultMono.cache().doOnSubscribe(subscription -> {
@@ -101,7 +101,7 @@ public class Tracker {
         }
     }
 
-    public void fetchingFinished(NormalizedField normalizedField, ExecutionPath executionPath) {
+    public void fetchingFinished(NormalizedField normalizedField, ResultPath resultPath) {
         NFData nfData = nfDataMap.get(normalizedField);
         nfData.fetchingFinishedCount++;
         NormalizedField parent = normalizedField.getParent();
@@ -161,7 +161,7 @@ public class Tracker {
         }
     }
 
-    public void incrementNonNullCount(NormalizedField normalizedField, ExecutionPath executionPath) {
+    public void incrementNonNullCount(NormalizedField normalizedField, ResultPath resultPath) {
         nfDataMap.computeIfAbsent(normalizedField, k -> new NFData()).nonNullChildren++;
     }
 

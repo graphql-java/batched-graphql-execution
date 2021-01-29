@@ -1,17 +1,17 @@
 package graphql.consulting.batched;
 
 import graphql.consulting.batched.normalized.NormalizedField;
-import graphql.execution.ExecutionPath;
+import graphql.execution.ResultPath;
 import reactor.core.publisher.MonoProcessor;
 
 public class OneField {
-    public ExecutionPath executionPath;
+    public ResultPath resultPath;
     public NormalizedField normalizedField;
     public Object source;
     public MonoProcessor<Object> resultMono;
 
-    public OneField(ExecutionPath executionPath, NormalizedField normalizedField, Object source) {
-        this.executionPath = executionPath;
+    public OneField(ResultPath resultPath, NormalizedField normalizedField, Object source) {
+        this.resultPath = resultPath;
         this.normalizedField = normalizedField;
         this.source = source;
     }
@@ -19,7 +19,7 @@ public class OneField {
     @Override
     public String toString() {
         return "OneField{" +
-                "executionPath=" + executionPath +
+                "resultPath=" + resultPath +
                 '}';
     }
 }

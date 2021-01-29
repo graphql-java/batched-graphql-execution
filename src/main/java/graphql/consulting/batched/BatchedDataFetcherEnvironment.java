@@ -1,19 +1,19 @@
 package graphql.consulting.batched;
 
 import graphql.consulting.batched.normalized.NormalizedField;
-import graphql.execution.ExecutionPath;
+import graphql.execution.ResultPath;
 
 import java.util.List;
 
 public class BatchedDataFetcherEnvironment {
     private List<Object> sources;
     private List<NormalizedField> normalizedFields;
-    private List<ExecutionPath> executionPaths;
+    private List<ResultPath> resultPaths;
 
-    public BatchedDataFetcherEnvironment(List<Object> sources, List<NormalizedField> normalizedFields, List<ExecutionPath> executionPaths) {
+    public BatchedDataFetcherEnvironment(List<Object> sources, List<NormalizedField> normalizedFields, List<ResultPath> resultPaths) {
         this.sources = sources;
         this.normalizedFields = normalizedFields;
-        this.executionPaths = executionPaths;
+        this.resultPaths = resultPaths;
     }
 
     public List<Object> getSources() {
@@ -24,7 +24,7 @@ public class BatchedDataFetcherEnvironment {
         return normalizedFields;
     }
 
-    public List<ExecutionPath> getExecutionPaths() {
-        return executionPaths;
+    public List<ResultPath> getResultPaths() {
+        return resultPaths;
     }
 }

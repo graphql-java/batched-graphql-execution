@@ -2,19 +2,19 @@ package graphql.consulting.batched;
 
 import graphql.PublicApi;
 import graphql.consulting.batched.normalized.NormalizedField;
-import graphql.execution.ExecutionPath;
+import graphql.execution.ResultPath;
 
 @PublicApi
 public class SingleDataFetcherEnvironment {
 
     private Object source;
     private NormalizedField normalizedFields;
-    private ExecutionPath executionPaths;
+    private ResultPath resultPaths;
 
-    public SingleDataFetcherEnvironment(Object source, NormalizedField normalizedFields, ExecutionPath executionPaths) {
+    public SingleDataFetcherEnvironment(Object source, NormalizedField normalizedFields, ResultPath resultPaths) {
         this.source = source;
         this.normalizedFields = normalizedFields;
-        this.executionPaths = executionPaths;
+        this.resultPaths = resultPaths;
     }
 
     public Object getSource() {
@@ -25,7 +25,7 @@ public class SingleDataFetcherEnvironment {
         return normalizedFields;
     }
 
-    public ExecutionPath getExecutionPaths() {
-        return executionPaths;
+    public ResultPath getResultPaths() {
+        return resultPaths;
     }
 }
